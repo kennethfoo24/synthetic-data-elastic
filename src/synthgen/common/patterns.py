@@ -29,7 +29,7 @@ def _weekly(t: datetime, flow_class: str) -> float:
 
 def _jitter(t: datetime, key: str, seed: int) -> float:
     minute_bucket = int(t.timestamp()) // 60
-    rng = random.Random(hash((seed, key, minute_bucket)))
+    rng = random.Random(f"{seed}|{key}|{minute_bucket}")
     return rng.uniform(0.85, 1.15)
 
 
@@ -40,4 +40,6 @@ def rate_multiplier(t: datetime, flow_class: str, key: str, seed: int = GLOBAL_S
 
 
 def in_backup_window(t: datetime) -> bool:
+    if t.tzinfo is None:
+        raise ValueError("t must be timezone-aware")
     return 1 <= t.hour < 3
