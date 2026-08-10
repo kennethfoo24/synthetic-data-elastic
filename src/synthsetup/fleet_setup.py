@@ -18,7 +18,7 @@ CISCO_ASA_INPUTS = {
         "streams": {
             "cisco_asa.log": {
                 "enabled": True,
-                "vars": {"syslog_host": "0.0.0.0", "syslog_port": ASA_PORT},
+                "vars": {"udp_host": "0.0.0.0", "udp_port": ASA_PORT},
             }
         },
     }
