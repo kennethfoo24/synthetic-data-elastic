@@ -18,4 +18,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-kubectl@v4
-      - run: if [ -d k8s ]; then kubectl kustomize k8s/ > /dev/null; fi
+      - run: kubectl kustomize k8s/ > /dev/null

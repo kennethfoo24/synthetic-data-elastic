@@ -1,3 +1,7 @@
+# This file is used for CI validation only (kubectl kustomize k8s/ >/dev/null).
+# deploy.sh is the canonical deployment path — it handles SHA pinning of the
+# synthetic-netgen image and creates the elastic-credentials secret from .env.
+# Do NOT use kubectl apply -k k8s/ directly; it deploys :latest and skips secrets.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

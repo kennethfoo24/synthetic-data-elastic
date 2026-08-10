@@ -7,8 +7,14 @@ For detailed design and architecture, see [docs/superpowers/specs/2026-08-10-syn
 ## Quick start
 
 ```bash
-cp .env.example .env
-make up
+make bootstrap           # create .venv and install deps (python3.12 required)
+cp .env.example .env     # fill in ES_URL, KIBANA_URL, ELASTIC_API_KEY
+make up                  # deploy to Kubernetes (k8s context must point at your cluster)
+make validate            # confirm data is flowing (~2 min after make up)
 ```
 
-(Coming in later tasks.)
+To reset databases after a pod restart (emptyDir volumes are lost on restart):
+
+```bash
+make reset-databases
+```

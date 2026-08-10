@@ -1,4 +1,7 @@
-.PHONY: up down validate test reset-databases
+.PHONY: up down validate test bootstrap reset-databases
+
+bootstrap:
+	python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 
 up:
 	./deploy.sh

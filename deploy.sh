@@ -47,6 +47,13 @@ kubectl -n synthetic-network wait --for=condition=complete job/mongodb-init --ti
   echo "ERROR: mongodb-init failed; logs:"; kubectl -n synthetic-network logs job/mongodb-init; exit 1;
 }
 
+echo "==> Logstash SNMP pipeline (standalone — no Fleet dependency)"
+# Logstash uses the official Elastic image (already pinned to 9.1.3 in the manifest);
+# applied here before fleet-setup since it has no Fleet dependency.
+# snmpsim (the SNMP simulator) uses the synthetic-netgen image and is SHA-pinned
+# via the generators loop below.
+kubectl apply -f k8s/logstash/logstash.yaml
+
 echo "==> fleet setup job"
 kubectl apply -f k8s/rbac.yaml
 kubectl -n synthetic-network delete job fleet-setup --ignore-not-found
@@ -58,30 +65,19 @@ kubectl -n synthetic-network logs job/fleet-setup
 
 echo "==> agent + generators"
 kubectl apply -f k8s/elastic-agent.yaml
-sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-gen.yaml | kubectl apply -f -
-sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-ios-gen.yaml | kubectl apply -f -
-sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-panw-gen.yaml | kubectl apply -f -
-sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-meraki-gen.yaml | kubectl apply -f -
-sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/meraki-webhook-gen.yaml | kubectl apply -f -
-sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/netflow-gen.yaml | kubectl apply -f -
+# SHA-pin every synthetic-netgen reference: loop over all generator manifests
+# (includes snmpsim which uses synthetic-netgen with the [snmp] extras).
+# logstash uses the official Elastic image and was applied plain above.
+for manifest in k8s/generators/*.yaml; do
+  sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" "$manifest" | kubectl apply -f -
+done
+
+echo "==> rollout waits"
 kubectl -n synthetic-network rollout status deploy/elastic-agent --timeout=300s
-kubectl -n synthetic-network rollout status deploy/syslog-gen --timeout=120s
-kubectl -n synthetic-network rollout status deploy/syslog-ios-gen --timeout=120s
-kubectl -n synthetic-network rollout status deploy/syslog-panw-gen --timeout=120s
-kubectl -n synthetic-network rollout status deploy/syslog-meraki-gen --timeout=120s
-kubectl -n synthetic-network rollout status deploy/meraki-webhook-gen --timeout=120s
-kubectl -n synthetic-network rollout status deploy/netflow-gen --timeout=120s
-
-sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/db-workload.yaml | kubectl apply -f -
-kubectl -n synthetic-network rollout status deploy/db-workload --timeout=120s
-
-echo "==> SNMP: snmpsim simulator + Logstash SNMP pipeline"
-# snmpsim uses the synthetic-netgen image (snmpsim installed via [snmp] group);
-# SHA-pin applies only to this image, not to the official Logstash image.
-sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/snmpsim.yaml | kubectl apply -f -
-# Logstash uses the official Elastic image (already pinned to 9.1.3 in the manifest).
-kubectl apply -f k8s/logstash/logstash.yaml
-kubectl -n synthetic-network rollout status deploy/snmpsim --timeout=120s
+for manifest in k8s/generators/*.yaml; do
+  name=$(basename "$manifest" .yaml)
+  kubectl -n synthetic-network rollout status "deploy/$name" --timeout=120s
+done
 kubectl -n synthetic-network rollout status deploy/logstash --timeout=300s
 
 echo "==> done. Run 'make validate' in ~2 minutes to confirm data is flowing."
