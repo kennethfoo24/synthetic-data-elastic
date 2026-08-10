@@ -1,0 +1,55 @@
+# Single source of truth for the synthetic network.
+# Every generator, backfill, and validation derives from this file.
+sites:
+  production: {subnet: 10.10.0.0/16}
+  dr: {subnet: 10.20.0.0/16}
+
+devices:
+  # ── Production ──────────────────────────────────────────────
+  - {name: palo-fw-prod,       vendor: paloalto, vendor_os: panos,   model: PA-3260,        role: firewall, site: production, ip: 10.10.0.1}
+  - {name: cisco-rtr-core-01,  vendor: cisco,    vendor_os: ios,     model: ISR4451,        role: router,   site: production, ip: 10.10.1.1}
+  - {name: cisco-rtr-core-02,  vendor: cisco,    vendor_os: ios,     model: ISR4451,        role: router,   site: production, ip: 10.10.1.2}
+  - {name: cisco-sw-access-01, vendor: cisco,    vendor_os: ios,     model: C9300-48T,      role: switch,   site: production, ip: 10.10.2.1}
+  - {name: cisco-sw-access-02, vendor: cisco,    vendor_os: ios,     model: C9300-48T,      role: switch,   site: production, ip: 10.10.2.2}
+  - {name: cisco-sw-access-03, vendor: cisco,    vendor_os: ios,     model: C9300-48T,      role: switch,   site: production, ip: 10.10.2.3}
+  - {name: hpe-sw-01,          vendor: hpe,      vendor_os: arubaos, model: Aruba-6300M,    role: switch,   site: production, ip: 10.10.2.10}
+  - {name: dell-sw-01,         vendor: dell,     vendor_os: os10,    model: S4148F-ON,      role: switch,   site: production, ip: 10.10.2.11}
+  - {name: meraki-mx-01,       vendor: meraki,   vendor_os: meraki,  model: MX250,          role: firewall, site: production, ip: 10.10.3.1}
+  - {name: meraki-ap-01,       vendor: meraki,   vendor_os: meraki,  model: MR46,           role: ap,       site: production, ip: 10.10.3.11}
+  - {name: meraki-ap-02,       vendor: meraki,   vendor_os: meraki,  model: MR46,           role: ap,       site: production, ip: 10.10.3.12}
+  - {name: hpe-srv-01,         vendor: hpe,      vendor_os: ilo,     model: DL380-Gen11,    role: server,   site: production, ip: 10.10.5.11}
+  - {name: hpe-srv-02,         vendor: hpe,      vendor_os: ilo,     model: DL380-Gen11,    role: server,   site: production, ip: 10.10.5.12}
+  - {name: dell-srv-01,        vendor: dell,     vendor_os: idrac,   model: R760,           role: server,   site: production, ip: 10.10.5.21}
+  - {name: dell-srv-02,        vendor: dell,     vendor_os: idrac,   model: R760,           role: server,   site: production, ip: 10.10.5.22}
+  - {name: hpe-storage-01,     vendor: hpe,      vendor_os: alletra, model: Alletra-6030,   role: storage,  site: production, ip: 10.10.6.11}
+  - {name: dell-storage-01,    vendor: dell,     vendor_os: powerstore, model: PowerStore-1200T, role: storage, site: production, ip: 10.10.6.21}
+  - {name: mongodb-prod,       vendor: mongodb,  vendor_os: mongod,  model: replica-primary, role: database, site: production, ip: 10.10.7.11}
+  - {name: postgres-prod,      vendor: postgres, vendor_os: postgres, model: primary,       role: database, site: production, ip: 10.10.7.21}
+  # ── DR ──────────────────────────────────────────────────────
+  - {name: cisco-asa-dr,       vendor: cisco,    vendor_os: asa,     model: ASA5545-X,      role: firewall, site: dr, ip: 10.20.0.1}
+  - {name: cisco-rtr-dr,       vendor: cisco,    vendor_os: ios,     model: ISR4331,        role: router,   site: dr, ip: 10.20.1.1}
+  - {name: cisco-sw-dr-01,     vendor: cisco,    vendor_os: ios,     model: C9300-24T,      role: switch,   site: dr, ip: 10.20.2.1}
+  - {name: dell-sw-dr,         vendor: dell,     vendor_os: os10,    model: S4128F-ON,      role: switch,   site: dr, ip: 10.20.2.2}
+  - {name: hpe-srv-dr-01,      vendor: hpe,      vendor_os: ilo,     model: DL380-Gen11,    role: server,   site: dr, ip: 10.20.5.11}
+  - {name: dell-storage-dr,    vendor: dell,     vendor_os: powerstore, model: PowerStore-500T, role: storage, site: dr, ip: 10.20.6.21}
+  - {name: mongodb-dr,         vendor: mongodb,  vendor_os: mongod,  model: replica-secondary, role: database, site: dr, ip: 10.20.7.11}
+  - {name: postgres-dr,        vendor: postgres, vendor_os: postgres, model: standby,       role: database, site: dr, ip: 10.20.7.21}
+
+flows:
+  # user/app traffic inside production
+  - {name: wifi-to-web,        src: meraki-ap-01,  dst: hpe-srv-01,      dst_port: 443,   proto: tcp, flow_class: user,        baseline_bps: 4000000}
+  - {name: wifi2-to-web,       src: meraki-ap-02,  dst: hpe-srv-02,      dst_port: 443,   proto: tcp, flow_class: user,        baseline_bps: 3000000}
+  - {name: web-to-postgres,    src: hpe-srv-01,    dst: postgres-prod,   dst_port: 5432,  proto: tcp, flow_class: app,         baseline_bps: 1500000}
+  - {name: web2-to-postgres,   src: hpe-srv-02,    dst: postgres-prod,   dst_port: 5432,  proto: tcp, flow_class: app,         baseline_bps: 1000000}
+  - {name: app-to-mongo,       src: dell-srv-01,   dst: mongodb-prod,    dst_port: 27017, proto: tcp, flow_class: app,         baseline_bps: 2000000}
+  - {name: app2-to-mongo,      src: dell-srv-02,   dst: mongodb-prod,    dst_port: 27017, proto: tcp, flow_class: app,         baseline_bps: 1200000}
+  - {name: srv-to-hpe-storage, src: hpe-srv-01,    dst: hpe-storage-01,  dst_port: 3260,  proto: tcp, flow_class: app,         baseline_bps: 5000000}
+  - {name: srv-to-dell-storage, src: dell-srv-01,  dst: dell-storage-01, dst_port: 3260,  proto: tcp, flow_class: app,         baseline_bps: 5000000}
+  # inter-site
+  - {name: site-vpn,           src: palo-fw-prod,  dst: cisco-asa-dr,    dst_port: 4500,  proto: udp, flow_class: vpn,         baseline_bps: 800000}
+  - {name: mongo-replication,  src: mongodb-prod,  dst: mongodb-dr,      dst_port: 27017, proto: tcp, flow_class: replication, baseline_bps: 600000}
+  - {name: pg-replication,     src: postgres-prod, dst: postgres-dr,     dst_port: 5432,  proto: tcp, flow_class: replication, baseline_bps: 500000}
+  - {name: nightly-backup-hpe, src: hpe-storage-01, dst: dell-storage-dr, dst_port: 2049, proto: tcp, flow_class: backup,      baseline_bps: 20000000}
+  - {name: nightly-backup-dell, src: dell-storage-01, dst: dell-storage-dr, dst_port: 2049, proto: tcp, flow_class: backup,    baseline_bps: 20000000}
+  # dr-local
+  - {name: dr-web-to-pg,       src: hpe-srv-dr-01, dst: postgres-dr,     dst_port: 5432,  proto: tcp, flow_class: app,         baseline_bps: 200000}
