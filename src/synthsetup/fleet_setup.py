@@ -12,6 +12,7 @@ from synthsetup.fleet_client import FleetClient
 AGENT_POLICY = "synthetic-network"
 ASA_PORT = 9001
 IOS_PORT = 9002
+PANW_PORT = 9003
 
 CISCO_ASA_INPUTS = {
     "cisco_asa-udp": {
@@ -32,6 +33,23 @@ CISCO_IOS_INPUTS = {
             "cisco_ios.log": {
                 "enabled": True,
                 "vars": {"syslog_host": "0.0.0.0", "syslog_port": IOS_PORT},
+            }
+        },
+    }
+}
+
+PANW_INPUTS = {
+    "panw-udp": {
+        "enabled": True,
+        "streams": {
+            "panw.panos": {
+                "enabled": True,
+                "vars": {
+                    "syslog_host": "0.0.0.0",
+                    "syslog_port": PANW_PORT,
+                    "internal_zones": ["inside"],
+                    "external_zones": ["outside"],
+                },
             }
         },
     }
@@ -72,6 +90,10 @@ def main() -> None:
     fleet.ensure_package_policy("cisco-ios-syslog", policy_id, "cisco_ios", version,
                                 CISCO_IOS_INPUTS)
     print(f"cisco_ios {version}: integration policy ensured", flush=True)
+
+    version = fleet.latest_package_version("panw")
+    fleet.ensure_package_policy("panw-syslog", policy_id, "panw", version, PANW_INPUTS)
+    print(f"panw {version}: integration policy ensured", flush=True)
 
     token = fleet.get_or_create_enrollment_token(policy_id)
     fleet_url = fleet.default_fleet_url()

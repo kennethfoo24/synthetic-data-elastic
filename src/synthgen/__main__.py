@@ -7,19 +7,20 @@ from datetime import UTC, datetime
 
 from synthgen import GLOBAL_SEED
 from synthgen.common.topology import load_topology
-from synthgen.syslog_gen import asa_source, ios_source
+from synthgen.syslog_gen import asa_source, ios_source, panw_source
 from synthgen.syslog_gen.emitter import UdpSender
 
 _SOURCES = {
     "syslog-asa": asa_source.generate_batch,
     "syslog-ios": ios_source.generate_batch,
+    "syslog-panw": panw_source.generate_batch,
 }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="synthgen")
     sub = parser.add_subparsers(dest="mode", required=True)
-    for mode in ("syslog-asa", "syslog-ios"):
+    for mode in ("syslog-asa", "syslog-ios", "syslog-panw"):
         p = sub.add_parser(mode)
         p.add_argument("--target-host", required=True)
         p.add_argument("--target-port", type=int, required=True)

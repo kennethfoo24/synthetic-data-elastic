@@ -7,6 +7,7 @@ from synthsetup.validate import (
     check_agents_online,
     check_asa_docs_recent,
     check_ios_docs_recent,
+    check_panw_docs_recent,
 )
 
 CTX = Ctx(es_url="https://es.example.com", kibana_url="https://kb.example.com", api_key="k")
@@ -79,3 +80,26 @@ def test_ios_check_fails_when_stream_missing():
         status_code=404, json={})
     with pytest.raises(CheckFailed, match="does not exist"):
         check_ios_docs_recent(CTX)
+
+
+@respx.mock
+def test_panw_check_passes_with_recent_docs():
+    respx.post("https://es.example.com/logs-panw.panos-default/_count").respond(
+        json={"count": 99})
+    assert "99" in check_panw_docs_recent(CTX)
+
+
+@respx.mock
+def test_panw_check_fails_with_zero_docs():
+    respx.post("https://es.example.com/logs-panw.panos-default/_count").respond(
+        json={"count": 0})
+    with pytest.raises(CheckFailed, match="0 docs"):
+        check_panw_docs_recent(CTX)
+
+
+@respx.mock
+def test_panw_check_fails_when_stream_missing():
+    respx.post("https://es.example.com/logs-panw.panos-default/_count").respond(
+        status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_panw_docs_recent(CTX)

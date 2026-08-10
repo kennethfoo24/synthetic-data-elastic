@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: syslog-panw-gen
+  namespace: synthetic-network
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: syslog-panw-gen}
+  template:
+    metadata:
+      labels: {app: syslog-panw-gen}
+    spec:
+      containers:
+        - name: syslog-panw-gen
+          image: kennethfoo24/synthetic-netgen:latest
+          args:
+            - syslog-panw
+            - --target-host=elastic-agent
+            - --target-port=9003
+            - --topology=/app/topology/network.yaml
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}

@@ -53,6 +53,17 @@ def check_ios_docs_recent(ctx: Ctx) -> str:
     return f"{count} IOS docs in last 5m"
 
 
+def check_panw_docs_recent(ctx: Ctx) -> str:
+    r = ctx.es().post("/logs-panw.panos-default/_count", json={
+        "query": {"range": {"@timestamp": {"gte": "now-5m"}}}})
+    if r.status_code == 404:
+        raise CheckFailed("data stream logs-panw.panos-default does not exist")
+    count = r.json().get("count", 0)
+    if count == 0:
+        raise CheckFailed("0 docs in logs-panw.panos-default in last 5m")
+    return f"{count} PANW docs in last 5m"
+
+
 def check_agents_online(ctx: Ctx) -> str:
     rp = ctx.kb().get("/api/fleet/agent_policies",
                       params={"kuery": f'name:"{AGENT_POLICY}"'})
@@ -73,6 +84,7 @@ CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("agent online in Fleet", check_agents_online),
     ("ASA logs flowing", check_asa_docs_recent),
     ("IOS logs flowing", check_ios_docs_recent),
+    ("PANW logs flowing", check_panw_docs_recent),
 ]
 
 
