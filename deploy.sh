@@ -19,6 +19,8 @@ docker manifest inspect "kennethfoo24/synthetic-netgen:$IMAGE_TAG" >/dev/null 2>
 }
 echo "==> pinning image kennethfoo24/synthetic-netgen:$IMAGE_TAG"
 
+[ -d .venv ] || { echo "ERROR: .venv not found — run 'make bootstrap' first"; exit 1; }
+
 echo "==> pipeline simulate gate"
 .venv/bin/python -m synthsetup.simulate || { echo "ERROR: wire formats failed pipeline simulation"; exit 1; }
 
