@@ -10,6 +10,13 @@ Community-string → file mapping (snmpsim v1.x flat-file mode):
     stem of each .snmprec file in --data-dir.  All 20 non-database, non-meraki
     devices are served from a single snmpsim pod on UDP 161.
 
+snmprec OCTET STRING encoding:
+    Tag ``4`` with a plain ASCII value (e.g. ``|4|cisco-rtr-core-01``) passes
+    the string directly to pyasn1's OctetString constructor, which encodes it as
+    ASCII bytes.  This is the "plain form" documented for snmpsim.  Do NOT use
+    the hex form (``|4|<hex>`` without the ``x`` suffix) — that embeds the hex
+    characters literally in the SNMP response instead of the decoded bytes.
+
 snmprec variation module syntax (snmpsim built-in ``numeric``):
     Format:   OID|<type-code>:numeric|key=value,key=value,...
     The tag field is ``<SNMP-type-code>:numeric`` and the value field holds
@@ -36,15 +43,19 @@ API-key decode (Logstash Deployment):
     The Deployment entrypoint shell decodes it into LS_API_KEY at startup —
     no extra Secret needed.
 
-Logstash SNMP community field:
-    logstash-integration-snmp (bundled plugin) exposes the community string
-    in [@metadata][host_community].  The filter copies it to device.name.
+Logstash enrichment strategy:
+    One snmp input block is generated per device.  Each block carries an
+    ``add_field`` directive that bakes device.name / device.vendor /
+    device.role / device.site directly into every event — no translate filter,
+    no @metadata lookups.  The only filter step is ``remove_field => ["host"]``
+    to drop the [host][ip] field that logstash-integration-snmp injects with the
+    snmpsim pod's hostname (not an IP string literal), which would cause ES to
+    reject every doc with a 400 parse error on the ip-type field.
 """
 from __future__ import annotations
 
 import textwrap
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -132,11 +143,6 @@ _COUNTER32_MOD = 2**32  # Counter32 initial-value modulus
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _hex_str(s: str) -> str:
-    """Encode ASCII string to hex bytes for snmprec OCTET STRING (tag 4) fields."""
-    return s.encode("ascii").hex()
-
-
 def _snmp_devices(topology_path: Path = TOPOLOGY_PATH) -> list[Device]:
     """Return all non-database, non-meraki devices from topology (SNMP targets)."""
     topo = load_topology(topology_path)
@@ -152,6 +158,11 @@ def render_snmprec(device: Device) -> str:
 
     OIDs are emitted in ascending numerical order (required by snmpsim).
 
+    OCTET STRING (tag 4) values use plain ASCII text — e.g. ``|4|cisco-rtr-core-01``.
+    snmpsim's OctetString handler calls ``OctetString(value)`` for the plain form,
+    which encodes the string as ASCII bytes.  This produces correct human-readable
+    strings in SNMP responses and downstream Elasticsearch documents.
+
     Variation module syntax (snmpsim/variation/numeric.py):
         OID|<type>:numeric|initial=X,rate=Y,...
     Counter32 uses rate=bytes/s + wrap=1 for realistic traffic simulation.
@@ -166,7 +177,8 @@ def render_snmprec(device: Device) -> str:
     # ── System group (1.3.6.1.2.1.1) ─────────────────────────────────────────
     sysdescr_tmpl = _SYSDESCR.get(vo, "{vendor} {model}")
     sysdescr = sysdescr_tmpl.format(model=model, vendor=device.vendor)
-    lines.append(f"1.3.6.1.2.1.1.1.0|4|{_hex_str(sysdescr)}")
+    # Plain ASCII form: |4|value — OctetString(value) encodes as ASCII bytes.
+    lines.append(f"1.3.6.1.2.1.1.1.0|4|{sysdescr}")
 
     sysoid = _SYSOID.get(vo, "1.3.6.1.4.1.99999.1")
     lines.append(f"1.3.6.1.2.1.1.2.0|6|{sysoid}")
@@ -175,10 +187,10 @@ def render_snmprec(device: Device) -> str:
     lines.append("1.3.6.1.2.1.1.3.0|67:numeric|initial=8640000,rate=100")
 
     # sysName MUST equal the topology device name (MCP node identity)
-    lines.append(f"1.3.6.1.2.1.1.5.0|4|{_hex_str(device.name)}")
+    lines.append(f"1.3.6.1.2.1.1.5.0|4|{device.name}")
 
     # sysLocation == site name
-    lines.append(f"1.3.6.1.2.1.1.6.0|4|{_hex_str(device.site)}")
+    lines.append(f"1.3.6.1.2.1.1.6.0|4|{device.site}")
 
     # ── Interface table (1.3.6.1.2.1.2.2.1) ──────────────────────────────────
     n = _IFACE_COUNT.get(device.role, 2)
@@ -189,10 +201,10 @@ def render_snmprec(device: Device) -> str:
     for i in range(1, n + 1):
         lines.append(f"1.3.6.1.2.1.2.2.1.1.{i}|2|{i}")
 
-    # ifTable column 2: ifDescr
+    # ifTable column 2: ifDescr (plain ASCII string)
     for i in range(1, n + 1):
         iname = f"{prefix}{i}"
-        lines.append(f"1.3.6.1.2.1.2.2.1.2.{i}|4|{_hex_str(iname)}")
+        lines.append(f"1.3.6.1.2.1.2.2.1.2.{i}|4|{iname}")
 
     # ifTable column 8: ifOperStatus (1 = up)
     for i in range(1, n + 1):
@@ -241,12 +253,17 @@ def render_snmprec(device: Device) -> str:
 
 
 # ---------------------------------------------------------------------------
-# translate.yaml renderer
+# translate.yaml renderer (topology reference — not used by Logstash pipeline)
 # ---------------------------------------------------------------------------
 
 def render_translate_yaml(devices: list[Device]) -> str:
-    """Render translate.yaml: device-name → {vendor, role, site, ip}."""
-    table: dict[str, Any] = {}
+    """Render translate.yaml: device-name → {vendor, role, site, ip}.
+
+    This file is a human-readable reference snapshot of the topology.
+    The Logstash pipeline no longer uses a translate filter — device metadata
+    is baked directly into each per-device snmp input block via add_field.
+    """
+    table: dict[str, dict] = {}
     for d in sorted(devices, key=lambda x: x.name):
         table[d.name] = {"ip": d.ip, "role": d.role, "site": d.site, "vendor": d.vendor}
     return yaml.dump({"devices": table}, default_flow_style=False, sort_keys=True)
@@ -256,47 +273,9 @@ def render_translate_yaml(devices: list[Device]) -> str:
 # logstash.conf renderer
 # ---------------------------------------------------------------------------
 
-def _translate_dict_lines(devices: list[Device]) -> str:
-    """Render the inline Logstash translate dictionary block (8-space indent)."""
-    rows = []
-    for d in sorted(devices, key=lambda x: x.name):
-        v = f"{d.vendor}|{d.role}|{d.site}"
-        rows.append(f'        "{d.name}" => "{v}"')
-    return "\n".join(rows)
-
-
-def _host_lines(devices: list[Device]) -> str:
-    """Render ``hosts => [...]`` lines for the given device list."""
-    entries = []
-    for d in sorted(devices, key=lambda x: x.name):
-        entries.append(
-            f'    {{ host => "udp:snmpsim/161" community => "{d.name}" version => "2c" }}'
-        )
-    return "    hosts => [\n" + ",\n".join(entries) + "\n    ]"
-
-
-def render_logstash_conf(devices: list[Device]) -> str:
-    """Render the Logstash pipeline config for all SNMP devices.
-
-    Two separate snmp input blocks are used so the storage-capacity OID
-    (1.3.6.1.4.1.99999.1.1.0) is only polled for the devices that actually
-    have it in their .snmprec — non-storage hosts would otherwise return
-    noSuchObject on every poll if the OID were in the shared get list.
-
-    target => "snmp" nests all OID-valued fields under [snmp] to prevent
-    10-level dotted OID names from polluting the top-level event namespace.
-
-    [@metadata][host_community] is populated by logstash-integration-snmp
-    (bundled with Logstash 8+/9.x) with the community string used for the
-    poll.  Since community == device name, it is copied directly to device.name.
-
-    The translate filter uses source/target (current API, not deprecated
-    field/destination) to enrich vendor, role, and site from the topology.
-    """
-    non_storage = [d for d in devices if d.role != "storage"]
-    storage = [d for d in devices if d.role == "storage"]
-
-    common_get = """\
+def _device_get_oids(device: Device) -> str:
+    """Render the get => [...] block for a device (storage devices get extra OID)."""
+    base = """\
     get => [
       "1.3.6.1.2.1.1.1.0",          # sysDescr
       "1.3.6.1.2.1.1.2.0",          # sysObjectID
@@ -307,8 +286,8 @@ def render_logstash_conf(devices: list[Device]) -> str:
       "1.3.6.1.2.1.25.2.3.1.6.1",  # hrStorageUsed
       "1.3.6.1.2.1.25.3.3.1.2.1"   # hrProcessorLoad
     ]"""
-
-    storage_get = """\
+    if device.role == "storage":
+        base = """\
     get => [
       "1.3.6.1.2.1.1.1.0",          # sysDescr
       "1.3.6.1.2.1.1.2.0",          # sysObjectID
@@ -320,69 +299,69 @@ def render_logstash_conf(devices: list[Device]) -> str:
       "1.3.6.1.2.1.25.3.3.1.2.1",  # hrProcessorLoad
       "1.3.6.1.4.1.99999.1.1.0"    # storage capacity % (storage devices only)
     ]"""
+    return base
 
-    walk_block = '    walk => ["1.3.6.1.2.1.2.2"]  # ifTable'
-    translate_block = _translate_dict_lines(devices)
 
-    # Build storage input block only if there are storage devices
-    storage_block = ""
-    if storage:
-        storage_hosts = _host_lines(storage)
-        storage_block = f"""
-  # Storage devices — includes capacity OID absent from non-storage profiles.
+def _device_input_block(device: Device) -> str:
+    """Render one snmp input block for a single device.
+
+    Device metadata (name, vendor, role, site) is baked directly into the
+    block via add_field so every event carries the correct identity without
+    any translate filter or @metadata lookup.
+    """
+    get_block = _device_get_oids(device)
+    return f"""\
+  # {device.name} ({device.vendor_os}/{device.role}/{device.site})
   snmp {{
-{storage_hosts}
-{storage_get}
-{walk_block}
+    hosts => [{{ host => "udp:snmpsim/161" community => "{device.name}" version => "2c" }}]
+{get_block}
+    walk => ["1.3.6.1.2.1.2.2"]  # ifTable
     interval => 60
     target => "snmp"
+    add_field => {{
+      "[device][name]"   => "{device.name}"
+      "[device][vendor]" => "{device.vendor}"
+      "[device][role]"   => "{device.role}"
+      "[device][site]"   => "{device.site}"
+    }}
   }}"""
 
-    non_storage_hosts = _host_lines(non_storage)
+
+def render_logstash_conf(devices: list[Device]) -> str:
+    """Render the Logstash pipeline config for all SNMP devices.
+
+    One snmp input block is generated per device (20 total).  Each block
+    carries add_field directives so device.name / vendor / role / site are
+    set deterministically — no translate filter, no @metadata dependency.
+
+    target => "snmp" nests all OID-valued fields under [snmp] to prevent
+    dotted-OID names from polluting the top-level event namespace.
+
+    Storage devices include the private capacity OID (1.3.6.1.4.1.99999.1.1.0)
+    in their get list; non-storage devices do not, avoiding noSuchObject errors.
+
+    The filter only removes [host] — logstash-integration-snmp sets [host][ip]
+    to the snmpsim pod hostname, which is not an IP string literal and causes
+    ES to reject every doc with a 400 error on the ip-type mapping.
+    """
+    input_blocks = "\n".join(
+        _device_input_block(d)
+        for d in sorted(devices, key=lambda x: x.name)
+    )
 
     return f"""\
 # Auto-generated by snmp/generator/render.py — re-run after updating topology.
-# Community string = device name; snmpsim selects <device-name>.snmprec per request.
+# One snmp input block per device; device metadata baked in via add_field.
 input {{
-  # Non-storage devices
-  snmp {{
-{non_storage_hosts}
-{common_get}
-{walk_block}
-    interval => 60
-    target => "snmp"
-  }}{storage_block}
+{input_blocks}
 }}
 
 filter {{
-  # [@metadata][host_community] is set by logstash-integration-snmp with the
-  # community string used for this poll.  Community == device name, so copy it.
+  # Drop [host] injected by logstash-integration-snmp.  The plugin sets
+  # [host][ip] to the snmpsim pod hostname ("snmpsim"), which is not an IP
+  # string literal — ES rejects every doc with a 400 error on the ip mapping.
   mutate {{
-    copy => {{ "[@metadata][host_community]" => "device.name" }}
-  }}
-
-  # Enrich vendor/role/site via inline translate dictionary (rendered from topology).
-  # Uses source/target (current API; field/destination are deprecated).
-  translate {{
-    source => "device.name"
-    target => "_device_meta"
-    dictionary => {{
-{translate_block}
-    }}
-    fallback => "unknown|unknown|unknown"
-  }}
-
-  # Split "vendor|role|site" into separate fields.
-  mutate {{
-    split => {{ "_device_meta" => "|" }}
-  }}
-  mutate {{
-    add_field => {{
-      "device.vendor" => "%{{[_device_meta][0]}}"
-      "device.role"   => "%{{[_device_meta][1]}}"
-      "device.site"   => "%{{[_device_meta][2]}}"
-    }}
-    remove_field => ["_device_meta"]
+    remove_field => ["host"]
   }}
 }}
 
