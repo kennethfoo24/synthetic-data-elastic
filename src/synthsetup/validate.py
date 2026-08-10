@@ -192,6 +192,30 @@ def check_postgresql_metrics(ctx: Ctx) -> str:
     return f"{count} PostgreSQL database metric docs in last 5m"
 
 
+def check_meraki_syslog_recent(ctx: Ctx) -> str:
+    """Verify Meraki syslog lines (flows/urls/events) flowing into logs-cisco_meraki.log-default."""
+    r = ctx.es().post("/logs-cisco_meraki.log-default/_count", json={
+        "query": {"range": {"@timestamp": {"gte": "now-5m"}}}})
+    if r.status_code == 404:
+        raise CheckFailed("data stream logs-cisco_meraki.log-default does not exist")
+    count = r.json().get("count", 0)
+    if count == 0:
+        raise CheckFailed("0 docs in logs-cisco_meraki.log-default in last 5m")
+    return f"{count} Meraki syslog docs in last 5m"
+
+
+def check_meraki_events_recent(ctx: Ctx) -> str:
+    """Verify Meraki webhook events flowing into logs-cisco_meraki.events-default."""
+    r = ctx.es().post("/logs-cisco_meraki.events-default/_count", json={
+        "query": {"range": {"@timestamp": {"gte": "now-5m"}}}})
+    if r.status_code == 404:
+        raise CheckFailed("data stream logs-cisco_meraki.events-default does not exist")
+    count = r.json().get("count", 0)
+    if count == 0:
+        raise CheckFailed("0 docs in logs-cisco_meraki.events-default in last 5m")
+    return f"{count} Meraki webhook event docs in last 5m"
+
+
 CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("agent online in Fleet", check_agents_online),
     ("ASA logs flowing", check_asa_docs_recent),
@@ -202,6 +226,8 @@ CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("SNMP metrics flowing", check_snmp_devices),
     ("MongoDB metrics flowing", check_mongodb_metrics),
     ("PostgreSQL metrics flowing", check_postgresql_metrics),
+    ("Meraki syslog flowing", check_meraki_syslog_recent),
+    ("Meraki webhook events flowing", check_meraki_events_recent),
 ]
 
 

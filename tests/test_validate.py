@@ -7,6 +7,8 @@ from synthsetup.validate import (
     check_agents_online,
     check_asa_docs_recent,
     check_ios_docs_recent,
+    check_meraki_events_recent,
+    check_meraki_syslog_recent,
     check_netflow_docs_recent,
     check_netflow_edges,
     check_panw_docs_recent,
@@ -258,3 +260,59 @@ def test_snmp_check_fails_when_stream_missing():
     ).respond(status_code=404, json={})
     with pytest.raises(CheckFailed, match="does not exist"):
         check_snmp_devices(CTX)
+
+
+# ---------------------------------------------------------------------------
+# Meraki syslog check
+# ---------------------------------------------------------------------------
+
+@respx.mock
+def test_meraki_syslog_check_passes_with_recent_docs():
+    respx.post("https://es.example.com/logs-cisco_meraki.log-default/_count").respond(
+        json={"count": 55})
+    result = check_meraki_syslog_recent(CTX)
+    assert "55" in result
+
+
+@respx.mock
+def test_meraki_syslog_check_fails_with_zero_docs():
+    respx.post("https://es.example.com/logs-cisco_meraki.log-default/_count").respond(
+        json={"count": 0})
+    with pytest.raises(CheckFailed, match="0 docs"):
+        check_meraki_syslog_recent(CTX)
+
+
+@respx.mock
+def test_meraki_syslog_check_fails_when_stream_missing():
+    respx.post("https://es.example.com/logs-cisco_meraki.log-default/_count").respond(
+        status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_meraki_syslog_recent(CTX)
+
+
+# ---------------------------------------------------------------------------
+# Meraki webhook events check
+# ---------------------------------------------------------------------------
+
+@respx.mock
+def test_meraki_events_check_passes_with_recent_docs():
+    respx.post("https://es.example.com/logs-cisco_meraki.events-default/_count").respond(
+        json={"count": 12})
+    result = check_meraki_events_recent(CTX)
+    assert "12" in result
+
+
+@respx.mock
+def test_meraki_events_check_fails_with_zero_docs():
+    respx.post("https://es.example.com/logs-cisco_meraki.events-default/_count").respond(
+        json={"count": 0})
+    with pytest.raises(CheckFailed, match="0 docs"):
+        check_meraki_events_recent(CTX)
+
+
+@respx.mock
+def test_meraki_events_check_fails_when_stream_missing():
+    respx.post("https://es.example.com/logs-cisco_meraki.events-default/_count").respond(
+        status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_meraki_events_recent(CTX)

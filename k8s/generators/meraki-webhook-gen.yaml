@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meraki-webhook-gen
+  namespace: synthetic-network
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: meraki-webhook-gen}
+  template:
+    metadata:
+      labels: {app: meraki-webhook-gen}
+    spec:
+      containers:
+        - name: meraki-webhook-gen
+          image: kennethfoo24/synthetic-netgen:latest
+          args:
+            - meraki-webhook
+            - --target-host=elastic-agent
+            - --target-port=9004
+          env:
+            - name: MERAKI_WEBHOOK_SECRET
+              value: "synthetic-meraki-secret"
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}

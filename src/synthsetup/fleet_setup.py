@@ -14,6 +14,9 @@ ASA_PORT = 9001
 IOS_PORT = 9002
 PANW_PORT = 9003
 NETFLOW_PORT = 2055
+MERAKI_SYSLOG_PORT = 9005
+MERAKI_WEBHOOK_PORT = 9004
+MERAKI_WEBHOOK_SECRET = "synthetic-meraki-secret"
 
 # devpass123: committed non-sensitive dev credential — see k8s/databases/postgres.yaml.
 _PG_DEVPASS = "devpass123"
@@ -73,6 +76,37 @@ NETFLOW_INPUTS = {
             }
         },
     }
+}
+
+# cisco_meraki 1.31.1 has no cloud-API polling input — syslog (UDP) for
+# cisco_meraki.log and webhook (HTTP endpoint/TCP) for cisco_meraki.events.
+CISCO_MERAKI_INPUTS = {
+    "cisco_meraki-udp": {
+        "enabled": True,
+        "streams": {
+            "cisco_meraki.log": {
+                "enabled": True,
+                "vars": {
+                    "listen_address": "0.0.0.0",
+                    "listen_port": MERAKI_SYSLOG_PORT,
+                },
+            }
+        },
+    },
+    "cisco_meraki-http_endpoint": {
+        "enabled": True,
+        "streams": {
+            "cisco_meraki.events": {
+                "enabled": True,
+                "vars": {
+                    "listen_address": "0.0.0.0",
+                    "listen_port": MERAKI_WEBHOOK_PORT,
+                    "url": "/meraki/events",
+                    "secret_value": MERAKI_WEBHOOK_SECRET,
+                },
+            }
+        },
+    },
 }
 
 # MongoDB replica set: both members listed so Fleet scrapes metrics from
@@ -181,6 +215,15 @@ def main() -> None:
     fleet.ensure_package_policy("postgresql-metrics", policy_id, "postgresql", version,
                                 POSTGRESQL_INPUTS)
     print(f"postgresql {version}: integration policy ensured (pg_stat_statements)", flush=True)
+
+    version = fleet.latest_package_version("cisco_meraki")
+    fleet.ensure_package_policy("cisco-meraki", policy_id, "cisco_meraki", version,
+                                CISCO_MERAKI_INPUTS)
+    print(
+        f"cisco_meraki {version}: integration policy ensured "
+        f"(syslog port {MERAKI_SYSLOG_PORT}/UDP, webhook port {MERAKI_WEBHOOK_PORT}/TCP)",
+        flush=True,
+    )
 
     token = fleet.get_or_create_enrollment_token(policy_id)
     fleet_url = fleet.default_fleet_url()

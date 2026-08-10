@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import sys
 import time
@@ -10,13 +11,14 @@ from synthgen import GLOBAL_SEED
 from synthgen.common.topology import load_topology
 from synthgen.netflow_gen import encoder as nf_encoder
 from synthgen.netflow_gen.source import generate_records as nf_generate_records
-from synthgen.syslog_gen import asa_source, ios_source, panw_source
+from synthgen.syslog_gen import asa_source, ios_source, meraki_source, panw_source
 from synthgen.syslog_gen.emitter import UdpSender
 
 _SOURCES = {
     "syslog-asa": asa_source.generate_batch,
     "syslog-ios": ios_source.generate_batch,
     "syslog-panw": panw_source.generate_batch,
+    "syslog-meraki": meraki_source.generate_batch,
 }
 
 # NetFlow v9 tuning
@@ -107,7 +109,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="synthgen")
     sub = parser.add_subparsers(dest="mode", required=True)
 
-    for mode in ("syslog-asa", "syslog-ios", "syslog-panw"):
+    for mode in ("syslog-asa", "syslog-ios", "syslog-panw", "syslog-meraki"):
         p = sub.add_parser(mode)
         p.add_argument("--target-host", required=True)
         p.add_argument("--target-port", type=int, required=True)
@@ -123,6 +125,11 @@ def main() -> None:
     db = sub.add_parser("db-workload")
     db.add_argument("--seed", type=int, default=GLOBAL_SEED)
 
+    mw = sub.add_parser("meraki-webhook")
+    mw.add_argument("--target-host", required=True)
+    mw.add_argument("--target-port", type=int, required=True)
+    mw.add_argument("--seed", type=int, default=GLOBAL_SEED)
+
     args = parser.parse_args()
 
     if args.mode == "netflow":
@@ -132,6 +139,13 @@ def main() -> None:
     if args.mode == "db-workload":
         from synthgen.db_workload import run as db_run
         db_run(seed=args.seed)
+        return
+
+    if args.mode == "meraki-webhook":
+        from synthgen.meraki_webhook import run as mw_run
+        secret = os.environ.get("MERAKI_WEBHOOK_SECRET", "synthetic-meraki-secret")
+        url = f"http://{args.target_host}:{args.target_port}/meraki/events"
+        mw_run(url, secret=secret, seed=args.seed)
         return
 
     topo = load_topology(args.topology)

@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from synthgen.syslog_gen.formats import asa, ios, panw
+from synthgen.syslog_gen.formats import asa, ios, meraki, panw
 from synthsetup.fleet_client import FleetClient
 
 _TS = datetime(2026, 8, 11, 12, 0, 0, tzinfo=UTC)
@@ -28,6 +28,8 @@ _ASA_HOST = "cisco-asa-dr"
 _IOS_HOST = "cisco-rtr-core-01"
 _PANW_HOST = "palo-fw-prod"
 _PANW_SERIAL = "001901000001"
+_MERAKI_MX_HOST = "meraki-mx-01"
+_MERAKI_AP_HOST = "meraki-ap-01"
 
 
 # ---------------------------------------------------------------------------
@@ -80,15 +82,36 @@ def _panw_samples() -> list[str]:
     ]
 
 
+def _meraki_samples() -> list[str]:
+    """3 representative Cisco Meraki syslog lines — one per log type.
+
+    Types covered: meraki_flow (MX flows), meraki_url (MX urls),
+                   meraki_event_association (AP events)
+    """
+    return [
+        meraki.meraki_flow(
+            _TS, _MERAKI_MX_HOST, "203.0.113.11", 51234, "10.10.5.11", 443,
+        ),
+        meraki.meraki_url(
+            _TS, _MERAKI_MX_HOST, "203.0.113.11", 51234, "10.10.5.11", 443,
+            "AA:BB:CC:DD:EE:01", "GET", "https://cdn.example.com/asset.js",
+        ),
+        meraki.meraki_event_association(
+            _TS, _MERAKI_AP_HOST, 0, 1, "AA:BB:CC:DD:EE:02",
+        ),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Registry: (package_name, dataset, sample_builder)
 # Pipeline name = f"logs-{dataset}-{version}"  (version resolved at runtime)
 # ---------------------------------------------------------------------------
 
 REGISTRY: list[tuple[str, str, Callable[[], list[str]]]] = [
-    ("cisco_asa", "cisco_asa.log", _asa_samples),
-    ("cisco_ios", "cisco_ios.log", _ios_samples),
-    ("panw",      "panw.panos",   _panw_samples),
+    ("cisco_asa",    "cisco_asa.log",    _asa_samples),
+    ("cisco_ios",    "cisco_ios.log",    _ios_samples),
+    ("panw",         "panw.panos",       _panw_samples),
+    ("cisco_meraki", "cisco_meraki.log", _meraki_samples),
 ]
 
 

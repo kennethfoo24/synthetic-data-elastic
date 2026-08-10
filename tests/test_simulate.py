@@ -1,7 +1,7 @@
 """Unit tests for synthsetup.simulate — mocked ES + Kibana endpoints.
 
 Tests cover:
-  - Happy path: all three pipelines return clean docs, no errors reported
+  - Happy path: all four pipelines return clean docs, no errors reported
   - Per-doc error path: one source returns an error doc; error names the source
   - HTTP error path: simulate returns non-200; error names the source and status
 """
@@ -20,6 +20,7 @@ _VERSIONS: dict[str, str] = {
     "cisco_asa": "2.34.0",
     "cisco_ios": "1.20.0",
     "panw": "5.5.0",
+    "cisco_meraki": "1.31.1",
 }
 
 
@@ -52,14 +53,16 @@ def _ok_response(n: int) -> dict:
 
 # Pinned sample counts per source — update both here AND in simulate.py when
 # a new message type is added to a source's sample builder.
-#   cisco_asa : 4 — asa_302013, asa_302014, asa_106023, asa_113005
-#   cisco_ios : 5 — ios_login_success, ios_config_i, ios_link_updown,
-#                   ios_lineproto_updown, ios_logginghost
-#   panw      : 2 — panos_traffic, panos_threat
+#   cisco_asa    : 4 — asa_302013, asa_302014, asa_106023, asa_113005
+#   cisco_ios    : 5 — ios_login_success, ios_config_i, ios_link_updown,
+#                      ios_lineproto_updown, ios_logginghost
+#   panw         : 2 — panos_traffic, panos_threat
+#   cisco_meraki : 3 — meraki_flow, meraki_url, meraki_event_association
 _EXPECTED_DOC_COUNTS: dict[str, int] = {
     "cisco_asa": 4,
     "cisco_ios": 5,
     "panw": 2,
+    "cisco_meraki": 3,
 }
 
 

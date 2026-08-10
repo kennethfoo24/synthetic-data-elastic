@@ -61,11 +61,15 @@ kubectl apply -f k8s/elastic-agent.yaml
 sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-gen.yaml | kubectl apply -f -
 sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-ios-gen.yaml | kubectl apply -f -
 sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-panw-gen.yaml | kubectl apply -f -
+sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-meraki-gen.yaml | kubectl apply -f -
+sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/meraki-webhook-gen.yaml | kubectl apply -f -
 sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/netflow-gen.yaml | kubectl apply -f -
 kubectl -n synthetic-network rollout status deploy/elastic-agent --timeout=300s
 kubectl -n synthetic-network rollout status deploy/syslog-gen --timeout=120s
 kubectl -n synthetic-network rollout status deploy/syslog-ios-gen --timeout=120s
 kubectl -n synthetic-network rollout status deploy/syslog-panw-gen --timeout=120s
+kubectl -n synthetic-network rollout status deploy/syslog-meraki-gen --timeout=120s
+kubectl -n synthetic-network rollout status deploy/meraki-webhook-gen --timeout=120s
 kubectl -n synthetic-network rollout status deploy/netflow-gen --timeout=120s
 
 sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/db-workload.yaml | kubectl apply -f -
