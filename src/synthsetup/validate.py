@@ -159,6 +159,39 @@ def check_snmp_devices(ctx: Ctx) -> str:
     return f"{total} SNMP metric docs in last 5m, {distinct} distinct devices"
 
 
+def check_mongodb_metrics(ctx: Ctx) -> str:
+    """Verify MongoDB status metrics flowing: docs in metrics-mongodb.status-default in last 5m.
+
+    The mongodb.status stream is always enabled and fires every 10 s, so ≥ 1 doc
+    within a 5-minute window is the minimum bar.  The data stream name format is
+    metrics-<package>.<dataset>-<namespace> per Fleet convention.
+    """
+    r = ctx.es().post("/metrics-mongodb.status-default/_count", json={
+        "query": {"range": {"@timestamp": {"gte": "now-5m"}}}})
+    if r.status_code == 404:
+        raise CheckFailed("data stream metrics-mongodb.status-default does not exist")
+    count = r.json().get("count", 0)
+    if count == 0:
+        raise CheckFailed("0 docs in metrics-mongodb.status-default in last 5m")
+    return f"{count} MongoDB status metric docs in last 5m"
+
+
+def check_postgresql_metrics(ctx: Ctx) -> str:
+    """Verify PostgreSQL database metrics flowing in metrics-postgresql.database-default.
+
+    The postgresql.database stream fires every 10 s.  A 5-minute window should
+    contain ≥ 1 doc for the postgres database on the primary.
+    """
+    r = ctx.es().post("/metrics-postgresql.database-default/_count", json={
+        "query": {"range": {"@timestamp": {"gte": "now-5m"}}}})
+    if r.status_code == 404:
+        raise CheckFailed("data stream metrics-postgresql.database-default does not exist")
+    count = r.json().get("count", 0)
+    if count == 0:
+        raise CheckFailed("0 docs in metrics-postgresql.database-default in last 5m")
+    return f"{count} PostgreSQL database metric docs in last 5m"
+
+
 CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("agent online in Fleet", check_agents_online),
     ("ASA logs flowing", check_asa_docs_recent),
@@ -167,6 +200,8 @@ CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("NetFlow docs flowing", check_netflow_docs_recent),
     ("NetFlow edge pairs >= 10", check_netflow_edges),
     ("SNMP metrics flowing", check_snmp_devices),
+    ("MongoDB metrics flowing", check_mongodb_metrics),
+    ("PostgreSQL metrics flowing", check_postgresql_metrics),
 ]
 
 

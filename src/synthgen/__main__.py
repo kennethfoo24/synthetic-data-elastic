@@ -120,10 +120,18 @@ def main() -> None:
     nf.add_argument("--topology", default="topology/network.yaml")
     nf.add_argument("--seed", type=int, default=GLOBAL_SEED)
 
+    db = sub.add_parser("db-workload")
+    db.add_argument("--seed", type=int, default=GLOBAL_SEED)
+
     args = parser.parse_args()
 
     if args.mode == "netflow":
         _run_netflow(args)
+        return
+
+    if args.mode == "db-workload":
+        from synthgen.db_workload import run as db_run
+        db_run(seed=args.seed)
         return
 
     topo = load_topology(args.topology)

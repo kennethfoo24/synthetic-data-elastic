@@ -1,0 +1,207 @@
+# k8s/databases/postgres.yaml
+#
+# PostgreSQL 16 primary + hot standby for the synthetic-data lab.
+#
+# Security note — committed password:
+#   POSTGRES_PASSWORD "devpass123" and replicator password "replpass123" are
+#   stored in a manifest-defined Secret.  These are non-sensitive development
+#   credentials for a local synthetic sandbox only.  No production data or real
+#   credentials are involved.  The passwords are committed deliberately so the
+#   lab cluster can be reproduced from source without manual secret injection.
+#
+# Architecture
+#   postgres-prod  —  primary; has pg_stat_statements loaded
+#   postgres-dr    —  hot standby; streams WAL from postgres-prod via
+#                     pg_basebackup (initContainer) + standby.signal (-R flag)
+#
+# pg_stat_statements is loaded via the "-c" postgres argument so that
+# statement-level metrics flow to the Fleet postgresql.statement data stream.
+#
+# On each pod (re)start, postgres-dr's initContainer re-runs pg_basebackup.
+# This takes ~5 s against an empty synthetic DB and is acceptable here.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: synthetic-network
+type: Opaque
+stringData:
+  postgres-password: "devpass123"
+  replicator-password: "replpass123"
+---
+# Init scripts for postgres-prod.  Mounted at /docker-entrypoint-initdb.d/.
+# The postgres image runs these scripts during first-boot initialization,
+# after the TCP server is up — so by the time the standby's initContainer
+# can connect, both the extension and the replication user already exist.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: synthetic-network
+data:
+  01-hba.sh: |
+    #!/bin/bash
+    # Allow TCP replication connections from within the cluster.
+    echo "host replication replicator all scram-sha-256" >> "$PGDATA/pg_hba.conf"
+  02-init.sql: |
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+    -- Replication user for the streaming standby (postgres-dr).
+    CREATE USER replicator WITH REPLICATION LOGIN ENCRYPTED PASSWORD 'replpass123';
+---
+# ClusterIP Service for postgres-prod (primary — read/write).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-prod
+  namespace: synthetic-network
+spec:
+  selector:
+    app: postgres-prod
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+# ClusterIP Service for postgres-dr (hot standby — read-only queries).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-dr
+  namespace: synthetic-network
+spec:
+  selector:
+    app: postgres-dr
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-prod
+  namespace: synthetic-network
+spec:
+  serviceName: postgres-prod
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-prod
+  template:
+    metadata:
+      labels:
+        app: postgres-prod
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          # Pass shared_preload_libraries via -c so pg_stat_statements is
+          # available without a custom postgresql.conf ConfigMap.
+          args: ["-c", "shared_preload_libraries=pg_stat_statements"]
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initscripts
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: initscripts
+          configMap:
+            name: postgres-init
+            defaultMode: 0755
+---
+# postgres-dr: hot standby via streaming replication.
+#
+# initContainer (pg-basebackup):
+#   Waits until postgres-prod's TCP port is accepting connections (which means
+#   all initdb scripts have run and the replication user exists), then runs
+#   pg_basebackup with -R.  The -R flag writes standby.signal and
+#   primary_conninfo into postgresql.auto.conf automatically (PostgreSQL 12+).
+#
+# Main container:
+#   Starts postgres normally; it finds standby.signal and enters recovery/
+#   standby mode, streaming WAL from postgres-prod.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-dr
+  namespace: synthetic-network
+spec:
+  serviceName: postgres-dr
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-dr
+  template:
+    metadata:
+      labels:
+        app: postgres-dr
+    spec:
+      initContainers:
+        - name: pg-basebackup
+          image: postgres:16
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: replicator-password
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+              echo "==> Waiting for postgres-prod to accept TCP connections..."
+              until pg_isready -h postgres-prod -U postgres; do sleep 3; done
+              echo "==> postgres-prod ready. Running pg_basebackup..."
+              rm -rf /var/lib/postgresql/data/pgdata
+              pg_basebackup \
+                -h postgres-prod \
+                -U replicator \
+                -D /var/lib/postgresql/data/pgdata \
+                --wal-method=stream \
+                --checkpoint=fast \
+                -R \
+                --progress
+              echo "==> Base backup complete (standby.signal + primary_conninfo written)."
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 256Mi}
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}

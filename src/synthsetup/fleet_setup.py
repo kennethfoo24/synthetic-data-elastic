@@ -15,6 +15,9 @@ IOS_PORT = 9002
 PANW_PORT = 9003
 NETFLOW_PORT = 2055
 
+# devpass123: committed non-sensitive dev credential — see k8s/databases/postgres.yaml.
+_PG_DEVPASS = "devpass123"
+
 CISCO_ASA_INPUTS = {
     "cisco_asa-udp": {
         "enabled": True,
@@ -72,6 +75,51 @@ NETFLOW_INPUTS = {
     }
 }
 
+# MongoDB replica set: both members listed so Fleet scrapes metrics from
+# both the primary (mongodb-prod) and the secondary (mongodb-dr).
+# replstatus stream is enabled to expose replication lag metrics.
+# Log collection (mongodb.log) is out of scope for Plan 2 — container-log
+# shipping via a non-DaemonSet agent is impractical; recorded as a gap for
+# the K8s-integration follow-up plan.
+MONGODB_INPUTS = {
+    "mongodb-mongodb/metrics": {
+        "enabled": True,
+        "vars": {
+            "hosts": ["mongodb-prod:27017", "mongodb-dr:27017"],
+        },
+        "streams": {
+            "mongodb.collstats": {"enabled": True, "vars": {"period": "10s"}},
+            "mongodb.dbstats": {"enabled": True, "vars": {"period": "10s"}},
+            "mongodb.metrics": {"enabled": True, "vars": {"period": "10s"}},
+            "mongodb.replstatus": {"enabled": True, "vars": {"period": "10s"}},
+            "mongodb.status": {"enabled": True, "vars": {"period": "10s"}},
+        },
+    }
+}
+
+# PostgreSQL primary only for metrics (Fleet agent reads from the primary).
+# hosts format is host:port (separate username/password vars per pkg schema).
+# pg_stat_statements must be loaded on the server (done via -c arg in the
+# StatefulSet manifest) for postgresql.statement metrics to work.
+# Log collection (postgresql.log) is out of scope for Plan 2 — same gap as
+# MongoDB: container-log shipping requires a DaemonSet-based agent.
+POSTGRESQL_INPUTS = {
+    "postgresql-postgresql/metrics": {
+        "enabled": True,
+        "vars": {
+            "hosts": ["postgres-prod:5432"],
+            "username": "postgres",
+            "password": _PG_DEVPASS,
+        },
+        "streams": {
+            "postgresql.activity": {"enabled": True, "vars": {"period": "10s"}},
+            "postgresql.bgwriter": {"enabled": True, "vars": {"period": "10s"}},
+            "postgresql.database": {"enabled": True, "vars": {"period": "10s"}},
+            "postgresql.statement": {"enabled": True, "vars": {"period": "10s"}},
+        },
+    }
+}
+
 
 def write_enrollment_secret(namespace: str, fleet_url: str, token: str) -> None:
     k8s_config.load_incluster_config()
@@ -115,6 +163,16 @@ def main() -> None:
     version = fleet.latest_package_version("netflow")
     fleet.ensure_package_policy("netflow-netflow", policy_id, "netflow", version, NETFLOW_INPUTS)
     print(f"netflow {version}: integration policy ensured (port {NETFLOW_PORT}/UDP)", flush=True)
+
+    version = fleet.latest_package_version("mongodb")
+    fleet.ensure_package_policy("mongodb-metrics", policy_id, "mongodb", version,
+                                MONGODB_INPUTS)
+    print(f"mongodb {version}: integration policy ensured (replstatus enabled)", flush=True)
+
+    version = fleet.latest_package_version("postgresql")
+    fleet.ensure_package_policy("postgresql-metrics", policy_id, "postgresql", version,
+                                POSTGRESQL_INPUTS)
+    print(f"postgresql {version}: integration policy ensured (pg_stat_statements)", flush=True)
 
     token = fleet.get_or_create_enrollment_token(policy_id)
     fleet_url = fleet.default_fleet_url()

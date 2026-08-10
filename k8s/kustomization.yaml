@@ -3,6 +3,8 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - rbac.yaml
+  - databases/mongodb.yaml
+  - databases/postgres.yaml
   - jobs/fleet-setup.yaml
   - elastic-agent.yaml
   - generators/syslog-gen.yaml
@@ -10,4 +12,5 @@ resources:
   - generators/syslog-panw-gen.yaml
   - generators/netflow-gen.yaml
   - generators/snmpsim.yaml
+  - generators/db-workload.yaml
   - logstash/logstash.yaml

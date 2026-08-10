@@ -1,0 +1,36 @@
+# k8s/generators/db-workload.yaml
+#
+# Continuous CRUD workload generator against MongoDB (mongodb-prod) and
+# PostgreSQL (postgres-prod).  Generates ~5-20 ops/s scaled by the diurnal
+# rate_multiplier, plus one slow unindexed scan every ~5 minutes per DB
+# (fodder for slow-query dashboards; full scenario suite comes in Plan 4).
+#
+# MONGO_URI and PG_DSN default to the in-cluster services defined in
+# k8s/databases/{mongodb,postgres}.yaml.  Override via environment variables
+# if pointing at a different instance.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-workload
+  namespace: synthetic-network
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: db-workload}
+  template:
+    metadata:
+      labels: {app: db-workload}
+    spec:
+      containers:
+        - name: db-workload
+          image: kennethfoo24/synthetic-netgen:latest
+          args:
+            - db-workload
+          env:
+            - name: MONGO_URI
+              value: "mongodb://mongodb-prod:27017/?replicaSet=rs0"
+            - name: PG_DSN
+              value: "postgresql://postgres:devpass123@postgres-prod:5432/postgres"
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}

@@ -30,6 +30,23 @@ kubectl -n synthetic-network create secret generic elastic-credentials \
   --from-literal=ELASTIC_API_KEY="$ELASTIC_API_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
 
+echo "==> databases (MongoDB replica set + PostgreSQL streaming standby)"
+# Apply database manifests BEFORE the fleet-setup job so that the integration
+# targets (mongodb-prod, postgres-prod) are reachable when Fleet polls them.
+kubectl apply -f k8s/databases/mongodb.yaml
+kubectl apply -f k8s/databases/postgres.yaml
+kubectl -n synthetic-network rollout status statefulset/mongodb-prod --timeout=120s
+kubectl -n synthetic-network rollout status statefulset/mongodb-dr  --timeout=120s
+kubectl -n synthetic-network rollout status statefulset/postgres-prod --timeout=180s
+# postgres-dr waits for the initContainer (pg_basebackup) before the pod is Ready
+kubectl -n synthetic-network rollout status statefulset/postgres-dr --timeout=300s
+# Initialise the MongoDB replica set (idempotent; safe to re-apply)
+kubectl -n synthetic-network delete job mongodb-init --ignore-not-found
+kubectl apply -f k8s/databases/mongodb.yaml
+kubectl -n synthetic-network wait --for=condition=complete job/mongodb-init --timeout=120s || {
+  echo "ERROR: mongodb-init failed; logs:"; kubectl -n synthetic-network logs job/mongodb-init; exit 1;
+}
+
 echo "==> fleet setup job"
 kubectl apply -f k8s/rbac.yaml
 kubectl -n synthetic-network delete job fleet-setup --ignore-not-found
@@ -50,6 +67,9 @@ kubectl -n synthetic-network rollout status deploy/syslog-gen --timeout=120s
 kubectl -n synthetic-network rollout status deploy/syslog-ios-gen --timeout=120s
 kubectl -n synthetic-network rollout status deploy/syslog-panw-gen --timeout=120s
 kubectl -n synthetic-network rollout status deploy/netflow-gen --timeout=120s
+
+sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/db-workload.yaml | kubectl apply -f -
+kubectl -n synthetic-network rollout status deploy/db-workload --timeout=120s
 
 echo "==> SNMP: snmpsim simulator + Logstash SNMP pipeline"
 # snmpsim uses the synthetic-netgen image (snmpsim installed via [snmp] group);

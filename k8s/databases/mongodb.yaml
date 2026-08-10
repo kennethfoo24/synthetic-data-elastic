@@ -1,0 +1,166 @@
+# k8s/databases/mongodb.yaml
+#
+# Two-member MongoDB replica set (rs0) for the synthetic-data lab.
+#
+# Security note — authless (no keyFile):
+#   Replica-set keyFile authentication is omitted intentionally.  The
+#   synthetic-network namespace is the security boundary; no service is
+#   exposed outside the cluster.  Adding keyFile auth in a lab where the
+#   keyfile would be stored in a plain ConfigMap provides no meaningful
+#   security uplift and complicates the init job significantly.
+#
+# Members
+#   mongodb-prod  —  primary  (priority 1)
+#   mongodb-dr    —  secondary (priority 0, will never be elected primary)
+#
+# The mongodb-init Job is idempotent: it checks rs.status() before calling
+# rs.initiate(), so re-applying this manifest is safe after a cluster restart.
+---
+# Headless Service for mongodb-prod — provides stable DNS for the StatefulSet
+# and is the target hosts entry in the Fleet mongodb integration.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-prod
+  namespace: synthetic-network
+spec:
+  clusterIP: None
+  selector:
+    app: mongodb-prod
+  ports:
+    - port: 27017
+      targetPort: 27017
+---
+# Headless Service for mongodb-dr — same purpose for the secondary member.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-dr
+  namespace: synthetic-network
+spec:
+  clusterIP: None
+  selector:
+    app: mongodb-dr
+  ports:
+    - port: 27017
+      targetPort: 27017
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb-prod
+  namespace: synthetic-network
+spec:
+  serviceName: mongodb-prod
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb-prod
+  template:
+    metadata:
+      labels:
+        app: mongodb-prod
+    spec:
+      containers:
+        - name: mongod
+          image: mongo:7
+          args: ["--replSet", "rs0", "--bind_ip_all"]
+          ports:
+            - containerPort: 27017
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+# mongodb-dr: secondary with priority 0 — will receive replication traffic but
+# will never be elected primary, ensuring the prod instance stays authoritative.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb-dr
+  namespace: synthetic-network
+spec:
+  serviceName: mongodb-dr
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb-dr
+  template:
+    metadata:
+      labels:
+        app: mongodb-dr
+    spec:
+      containers:
+        - name: mongod
+          image: mongo:7
+          args: ["--replSet", "rs0", "--bind_ip_all"]
+          ports:
+            - containerPort: 27017
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+# mongodb-init: one-shot Job that forms the rs0 replica set.
+# Runs rs.initiate() only when the replica set is not yet configured.
+# ttlSecondsAfterFinished cleans up the completed pod after 10 minutes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-init
+  namespace: synthetic-network
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mongosh
+          image: mongo:7
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+              echo "==> Waiting for mongodb-prod..."
+              until mongosh --host mongodb-prod --quiet \
+                --eval "db.adminCommand('ping').ok" 2>/dev/null | grep -q "^1$"; do
+                sleep 3
+              done
+              echo "==> Waiting for mongodb-dr..."
+              until mongosh --host mongodb-dr --quiet \
+                --eval "db.adminCommand('ping').ok" 2>/dev/null | grep -q "^1$"; do
+                sleep 3
+              done
+              echo "==> Both members ready. Checking replica set status..."
+              RS_OK=$(mongosh --host mongodb-prod --quiet \
+                --eval "try { rs.status().ok } catch(e) { 0 }" 2>/dev/null | tail -1)
+              if [ "$RS_OK" = "1" ]; then
+                echo "==> Replica set rs0 already initialized — nothing to do."
+              else
+                echo "==> Initiating replica set rs0..."
+                mongosh --host mongodb-prod --eval '
+                  var cfg = {
+                    _id: "rs0",
+                    members: [
+                      { _id: 0, host: "mongodb-prod:27017", priority: 1 },
+                      { _id: 1, host: "mongodb-dr:27017",   priority: 0 }
+                    ]
+                  };
+                  printjson(rs.initiate(cfg));
+                '
+              fi
+              echo "==> Done."
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 128Mi}
