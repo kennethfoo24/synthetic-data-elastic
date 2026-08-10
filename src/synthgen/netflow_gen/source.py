@@ -51,8 +51,8 @@ def generate_records(
         if flow.flow_class == "backup":
             mult *= 20 if in_backup_window(t) else 0.05
 
-        interval_bytes = max(1, int(flow.baseline_bps * mult / 8))
-        pkts = max(1, interval_bytes // 800)
+        interval_bytes = min(0xFFFFFFFF, max(1, int(flow.baseline_bps * mult / 8)))
+        pkts = min(0xFFFFFFFF, max(1, interval_bytes // 800))
 
         # Ephemeral source port: deterministic within each minute bucket per flow
         rng = random.Random(f"{seed}|{flow.name}|{minute_bucket}")
@@ -74,8 +74,8 @@ def generate_records(
         ))
 
         # Reverse / response flow (~10 % bytes, ports swapped)
-        rev_bytes = max(1, interval_bytes // 10)
-        rev_pkts = max(1, rev_bytes // 800)
+        rev_bytes = min(0xFFFFFFFF, max(1, interval_bytes // 10))
+        rev_pkts = min(0xFFFFFFFF, max(1, rev_bytes // 800))
         records.append(FlowRecord(
             src_addr=dst_dev.ip,
             dst_addr=src_dev.ip,

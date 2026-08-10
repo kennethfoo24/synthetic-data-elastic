@@ -161,3 +161,32 @@ def test_naive_datetime_raises():
     from datetime import datetime as dt
     with pytest.raises(ValueError, match="timezone-aware"):
         generate_records(topo(), dt(2026, 8, 10, 12, 0, 0))  # noqa: DTZ001
+
+
+# ---------------------------------------------------------------------------
+# uint32 clamp: struct.error must not occur on absurd baseline_bps
+# ---------------------------------------------------------------------------
+
+def test_in_bytes_clamped_to_uint32_max():
+    """generate_records must not produce in_bytes > 0xFFFFFFFF (struct.II overflow)."""
+    from synthgen.common.topology import Device, Flow, Topology
+
+    # Build a minimal topology with one absurdly large flow
+    dev_a = Device(name="a", vendor="v", vendor_os="o", model="m",
+                   role="server", site="production", ip="10.0.0.1")
+    dev_b = Device(name="b", vendor="v", vendor_os="o", model="m",
+                   role="server", site="production", ip="10.0.0.2")
+    huge_flow = Flow(name="huge", src="a", dst="b", dst_port=80, proto="tcp",
+                     flow_class="app", baseline_bps=10**15)  # absurd: 1 Pbps
+    fake_topo = Topology(devices=[dev_a, dev_b], flows=[huge_flow])
+
+    records = generate_records(fake_topo, T_PEAK)
+    for r in records:
+        assert r.in_bytes <= 0xFFFFFFFF, "in_bytes must fit in uint32"
+        assert r.in_pkts <= 0xFFFFFFFF, "in_pkts must fit in uint32"
+
+    # Also confirm the records can be encoded without struct errors
+    from synthgen.netflow_gen.encoder import build_packet
+    pkt = build_packet(records, sys_uptime_ms=1000, unix_secs=0,
+                       sequence=0, include_template=True)
+    assert len(pkt) > 0

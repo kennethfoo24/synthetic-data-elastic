@@ -26,8 +26,8 @@ _FIELDS: list[tuple[int, int]] = [
     (4, 1),   # PROTOCOL
     (1, 4),   # IN_BYTES
     (2, 4),   # IN_PKTS
-    (22, 4),  # FIRST_SWITCHED (sysUptime ms when first packet observed)
-    (21, 4),  # LAST_SWITCHED  (sysUptime ms when last packet observed)
+    (21, 4),  # FIRST_SWITCHED (sysUptime ms when first packet observed)
+    (22, 4),  # LAST_SWITCHED  (sysUptime ms when last packet observed)
 ]
 
 # Fixed sizes (used by the main loop for MTU chunking)

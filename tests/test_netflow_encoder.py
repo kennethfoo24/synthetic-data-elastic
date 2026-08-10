@@ -126,8 +126,8 @@ def test_template_field_definitions():
         (4, 1),   # PROTOCOL
         (1, 4),   # IN_BYTES
         (2, 4),   # IN_PKTS
-        (22, 4),  # FIRST_SWITCHED
-        (21, 4),  # LAST_SWITCHED
+        (21, 4),  # FIRST_SWITCHED (RFC 3954: field type 21)
+        (22, 4),  # LAST_SWITCHED  (RFC 3954: field type 22)
     ]
     pkt = build_packet([_rec()], sys_uptime_ms=0, unix_secs=0, sequence=0,
                        include_template=True)
@@ -244,3 +244,67 @@ def test_no_template_packet_starts_with_data_flowset():
                        include_template=False)
     fs_id = struct.unpack(">H", pkt[HEADER_SIZE : HEADER_SIZE + 2])[0]
     assert fs_id == TEMPLATE_ID
+
+
+# ---------------------------------------------------------------------------
+# Field ID correctness (RFC 3954: 21=FIRST_SWITCHED, 22=LAST_SWITCHED)
+# ---------------------------------------------------------------------------
+
+def test_first_switched_uses_field_type_21():
+    """RFC 3954: FIRST_SWITCHED is field type 21, LAST_SWITCHED is field type 22."""
+    pkt = build_packet([_rec(first=500, last=900)], sys_uptime_ms=1000,
+                       unix_secs=0, sequence=0, include_template=True)
+    # Field defs start at HEADER_SIZE + 4 (FS header) + 4 (tmpl_id + field_count)
+    pos = HEADER_SIZE + 4 + 4
+    field_types = []
+    for _ in range(9):
+        ftype, _ = struct.unpack(">HH", pkt[pos : pos + 4])
+        field_types.append(ftype)
+        pos += 4
+    # FIRST_SWITCHED is the 8th field (index 7), LAST_SWITCHED is the 9th (index 8)
+    assert field_types[7] == 21, f"FIRST_SWITCHED must be field type 21, got {field_types[7]}"
+    assert field_types[8] == 22, f"LAST_SWITCHED must be field type 22, got {field_types[8]}"
+
+
+def test_first_switched_value_precedes_last_switched_on_wire():
+    """After decoding the data record, first_switched bytes come before last_switched."""
+    rec = _rec(first=1000, last=1950)
+    pkt = build_packet([rec], sys_uptime_ms=2000, unix_secs=0, sequence=0,
+                       include_template=True)
+    # Data record starts at: header(20) + template_fs(44) + data_fs_header(4)
+    pos = HEADER_SIZE + TEMPLATE_FS_SIZE + DATA_FS_HEADER_SIZE
+    # Skip: src_addr(4) + dst_addr(4) + ports(4) + protocol(1) + in_bytes(4) + in_pkts(4) = 21
+    pos += 21
+    first_wire, last_wire = struct.unpack(">II", pkt[pos : pos + 8])
+    assert first_wire == 1000
+    assert last_wire == 1950
+    assert first_wire < last_wire  # semantic correctness
+
+
+# ---------------------------------------------------------------------------
+# Template-in-first-packet guarantee (_nf_chunks)
+# ---------------------------------------------------------------------------
+
+def test_first_packet_of_tick_always_has_template():
+    """Packet 0 of every tick must carry the template regardless of epoch_sec.
+
+    Tests epoch_sec values 1 and 5 (neither is a multiple of _NF_TEMPLATE_EVERY_N=20
+    when multiplied by _NF_MAX_PKTS_PER_SEC=64, so without the pkt_offset==0 fix
+    the template would be absent at cold-start seconds like 1).
+    """
+    from synthgen.__main__ import _NF_MAX_PKTS_PER_SEC, _NF_TEMPLATE_EVERY_N, _nf_chunks
+
+    records = [_rec()] * 5  # fewer than max-per-packet; fits in one chunk
+
+    for epoch_sec in (1, 5, 7, 11):
+        global_pkt_base = (epoch_sec * _NF_MAX_PKTS_PER_SEC) % (2**32)
+        # Confirm none of these would trigger the every-N rule on their own
+        if global_pkt_base % _NF_TEMPLATE_EVERY_N == 0:
+            continue  # skip degenerate case where both rules fire
+        chunks = list(_nf_chunks(records, global_pkt_base, first_of_tick=True))
+        assert len(chunks) >= 1
+        _chunk, include_tmpl = chunks[0]
+        assert include_tmpl, (
+            f"epoch_sec={epoch_sec}: packet 0 must include template "
+            f"(global_pkt_base={global_pkt_base})"
+        )

@@ -25,8 +25,15 @@ _NF_TEMPLATE_EVERY_N = 20   # re-send template flowset every N packets
 _NF_MAX_PKTS_PER_SEC = 64   # upper bound for deterministic sequence derivation
 
 
-def _nf_chunks(records: list, global_pkt_idx: int):
-    """Yield (chunk, include_template) slices that fit within _NF_MTU bytes."""
+def _nf_chunks(records: list, global_pkt_idx: int, first_of_tick: bool = False):
+    """Yield (chunk, include_template) slices that fit within _NF_MTU bytes.
+
+    Template inclusion rules:
+      1. Always in the first packet of every tick (pkt_offset == 0) — guarantees
+         the agent has a template before the accompanying data records every second.
+      2. Every _NF_TEMPLATE_EVERY_N-th packet globally — keeps the template
+         refreshing for any new listener that joins mid-stream.
+    """
     max_with = (
         _NF_MTU
         - nf_encoder.HEADER_SIZE
@@ -40,13 +47,17 @@ def _nf_chunks(records: list, global_pkt_idx: int):
         - nf_encoder.DATA_FS_HEADER_SIZE
     ) // nf_encoder.RECORD_SIZE
 
+    pkt_offset = 0
     i = 0
     while i < len(records):
-        include_tmpl = (global_pkt_idx % _NF_TEMPLATE_EVERY_N == 0)
+        include_tmpl = (pkt_offset == 0 and first_of_tick) or (
+            global_pkt_idx % _NF_TEMPLATE_EVERY_N == 0
+        )
         limit = max_with if include_tmpl else max_without
         yield records[i : i + limit], include_tmpl
         i += limit
         global_pkt_idx += 1
+        pkt_offset += 1
 
 
 def _run_netflow(args) -> None:
@@ -70,7 +81,7 @@ def _run_netflow(args) -> None:
         global_pkt_base = (epoch_sec * _NF_MAX_PKTS_PER_SEC) % (2**32)
 
         for pkt_offset, (chunk, include_tmpl) in enumerate(
-            _nf_chunks(records, global_pkt_base)
+            _nf_chunks(records, global_pkt_base, first_of_tick=True)
         ):
             sequence = (global_pkt_base + pkt_offset) & 0xFFFFFFFF
             pkt = nf_encoder.build_packet(
