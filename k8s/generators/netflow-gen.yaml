@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netflow-gen
+  namespace: synthetic-network
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: netflow-gen}
+  template:
+    metadata:
+      labels: {app: netflow-gen}
+    spec:
+      containers:
+        - name: netflow-gen
+          image: kennethfoo24/synthetic-netgen:latest
+          args:
+            - netflow
+            - --target-host=elastic-agent
+            - --target-port=2055
+            - --topology=/app/topology/network.yaml
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}

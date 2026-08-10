@@ -27,6 +27,7 @@ spec:
             - {containerPort: 9001, protocol: UDP, name: asa-syslog}
             - {containerPort: 9002, protocol: UDP, name: ios-syslog}
             - {containerPort: 9003, protocol: UDP, name: panw-syslog}
+            - {containerPort: 2055, protocol: UDP, name: netflow}
           resources:
             requests: {cpu: 200m, memory: 512Mi}
             limits: {memory: 1Gi}
@@ -42,3 +43,4 @@ spec:
     - {name: asa-syslog, port: 9001, protocol: UDP, targetPort: 9001}
     - {name: ios-syslog, port: 9002, protocol: UDP, targetPort: 9002}
     - {name: panw-syslog, port: 9003, protocol: UDP, targetPort: 9003}
+    - {name: netflow, port: 2055, protocol: UDP, targetPort: 2055}

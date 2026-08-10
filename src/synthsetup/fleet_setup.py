@@ -13,6 +13,7 @@ AGENT_POLICY = "synthetic-network"
 ASA_PORT = 9001
 IOS_PORT = 9002
 PANW_PORT = 9003
+NETFLOW_PORT = 2055
 
 CISCO_ASA_INPUTS = {
     "cisco_asa-udp": {
@@ -49,6 +50,22 @@ PANW_INPUTS = {
                     "syslog_port": PANW_PORT,
                     "internal_zones": ["inside"],
                     "external_zones": ["outside"],
+                },
+            }
+        },
+    }
+}
+
+NETFLOW_INPUTS = {
+    "netflow-netflow": {
+        "enabled": True,
+        "streams": {
+            "netflow.log": {
+                "enabled": True,
+                "vars": {
+                    "host": "0.0.0.0",
+                    "port": NETFLOW_PORT,
+                    "internal_networks": ["private"],
                 },
             }
         },
@@ -94,6 +111,10 @@ def main() -> None:
     version = fleet.latest_package_version("panw")
     fleet.ensure_package_policy("panw-syslog", policy_id, "panw", version, PANW_INPUTS)
     print(f"panw {version}: integration policy ensured", flush=True)
+
+    version = fleet.latest_package_version("netflow")
+    fleet.ensure_package_policy("netflow-netflow", policy_id, "netflow", version, NETFLOW_INPUTS)
+    print(f"netflow {version}: integration policy ensured (port {NETFLOW_PORT}/UDP)", flush=True)
 
     token = fleet.get_or_create_enrollment_token(policy_id)
     fleet_url = fleet.default_fleet_url()

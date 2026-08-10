@@ -80,11 +80,58 @@ def check_agents_online(ctx: Ctx) -> str:
     return f"{len(items)} agent(s) online in policy {AGENT_POLICY}"
 
 
+def check_netflow_docs_recent(ctx: Ctx) -> str:
+    r = ctx.es().post("/logs-netflow.log-default/_count", json={
+        "query": {"range": {"@timestamp": {"gte": "now-5m"}}}})
+    if r.status_code == 404:
+        raise CheckFailed("data stream logs-netflow.log-default does not exist")
+    count = r.json().get("count", 0)
+    if count == 0:
+        raise CheckFailed("0 docs in logs-netflow.log-default in last 5m")
+    return f"{count} NetFlow docs in last 5m"
+
+
+def check_netflow_edges(ctx: Ctx) -> str:
+    """Verify ≥ 10 distinct source.ip → destination.ip pairs in the last 5 minutes.
+
+    This is the edge-matrix query the MCP app uses to build the network flow graph.
+    Confirming ≥ 10 pairs proves that multiple flows from the topology are visible.
+    """
+    body = {
+        "size": 0,
+        "query": {"range": {"@timestamp": {"gte": "now-5m"}}},
+        "aggs": {
+            "src_ips": {
+                "terms": {"field": "source.ip", "size": 100},
+                "aggs": {
+                    "dst_ips": {
+                        "terms": {"field": "destination.ip", "size": 100},
+                    }
+                },
+            }
+        },
+    }
+    r = ctx.es().post("/logs-netflow.log-default/_search", json=body)
+    if r.status_code == 404:
+        raise CheckFailed("data stream logs-netflow.log-default does not exist")
+    pair_count = sum(
+        len(src_b.get("dst_ips", {}).get("buckets", []))
+        for src_b in r.json().get("aggregations", {}).get("src_ips", {}).get("buckets", [])
+    )
+    if pair_count < 10:
+        raise CheckFailed(
+            f"only {pair_count} distinct src→dst pairs in logs-netflow.log-default (need ≥ 10)"
+        )
+    return f"{pair_count} distinct src→dst flow pairs in last 5m"
+
+
 CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("agent online in Fleet", check_agents_online),
     ("ASA logs flowing", check_asa_docs_recent),
     ("IOS logs flowing", check_ios_docs_recent),
     ("PANW logs flowing", check_panw_docs_recent),
+    ("NetFlow docs flowing", check_netflow_docs_recent),
+    ("NetFlow edge pairs >= 10", check_netflow_edges),
 ]
 
 

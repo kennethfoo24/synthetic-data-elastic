@@ -8,3 +8,4 @@ resources:
   - generators/syslog-gen.yaml
   - generators/syslog-ios-gen.yaml
   - generators/syslog-panw-gen.yaml
+  - generators/netflow-gen.yaml

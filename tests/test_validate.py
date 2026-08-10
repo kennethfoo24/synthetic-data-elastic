@@ -7,6 +7,8 @@ from synthsetup.validate import (
     check_agents_online,
     check_asa_docs_recent,
     check_ios_docs_recent,
+    check_netflow_docs_recent,
+    check_netflow_edges,
     check_panw_docs_recent,
 )
 
@@ -103,3 +105,90 @@ def test_panw_check_fails_when_stream_missing():
         status_code=404, json={})
     with pytest.raises(CheckFailed, match="does not exist"):
         check_panw_docs_recent(CTX)
+
+
+# ---------------------------------------------------------------------------
+# NetFlow: doc-count check
+# ---------------------------------------------------------------------------
+
+@respx.mock
+def test_netflow_check_passes_with_recent_docs():
+    respx.post("https://es.example.com/logs-netflow.log-default/_count").respond(
+        json={"count": 100})
+    result = check_netflow_docs_recent(CTX)
+    assert "100" in result
+
+
+@respx.mock
+def test_netflow_check_fails_with_zero_docs():
+    respx.post("https://es.example.com/logs-netflow.log-default/_count").respond(
+        json={"count": 0})
+    with pytest.raises(CheckFailed, match="0 docs"):
+        check_netflow_docs_recent(CTX)
+
+
+@respx.mock
+def test_netflow_check_fails_when_stream_missing():
+    respx.post("https://es.example.com/logs-netflow.log-default/_count").respond(
+        status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_netflow_docs_recent(CTX)
+
+
+# ---------------------------------------------------------------------------
+# NetFlow: edge-pair (src→dst) check
+# ---------------------------------------------------------------------------
+
+def _edge_response(n_src: int, n_dst_each: int) -> dict:
+    """Build a fake ES aggregation response with n_src × n_dst_each pairs."""
+    return {
+        "aggregations": {
+            "src_ips": {
+                "buckets": [
+                    {
+                        "key": f"10.0.0.{i}",
+                        "doc_count": 5,
+                        "dst_ips": {
+                            "buckets": [
+                                {"key": f"10.0.1.{j}", "doc_count": 1}
+                                for j in range(n_dst_each)
+                            ]
+                        },
+                    }
+                    for i in range(n_src)
+                ]
+            }
+        }
+    }
+
+
+@respx.mock
+def test_netflow_edges_passes_with_12_pairs():
+    respx.post("https://es.example.com/logs-netflow.log-default/_search").respond(
+        json=_edge_response(6, 2))  # 6 × 2 = 12 pairs
+    result = check_netflow_edges(CTX)
+    assert "12" in result
+
+
+@respx.mock
+def test_netflow_edges_passes_at_exactly_ten():
+    respx.post("https://es.example.com/logs-netflow.log-default/_search").respond(
+        json=_edge_response(5, 2))  # 5 × 2 = 10 pairs
+    result = check_netflow_edges(CTX)
+    assert "10" in result
+
+
+@respx.mock
+def test_netflow_edges_fails_with_nine_pairs():
+    respx.post("https://es.example.com/logs-netflow.log-default/_search").respond(
+        json=_edge_response(3, 3))  # 3 × 3 = 9 pairs
+    with pytest.raises(CheckFailed, match="need"):
+        check_netflow_edges(CTX)
+
+
+@respx.mock
+def test_netflow_edges_fails_when_stream_missing():
+    respx.post("https://es.example.com/logs-netflow.log-default/_search").respond(
+        status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_netflow_edges(CTX)
