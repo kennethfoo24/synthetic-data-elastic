@@ -130,14 +130,15 @@ def check_snmp_devices(ctx: Ctx) -> str:
 
     Logstash polls snmpsim every 60 s via the bundled logstash-integration-snmp plugin
     and writes metrics to data stream metrics-snmp.device-default.  The terms agg on
-    device.name (keyword sub-field) confirms all topology devices are represented.
+    device.name confirms all topology devices are represented.  Under the built-in metrics
+    ECS template, string fields map directly to keyword — there is no .keyword sub-field.
     """
     body = {
         "size": 0,
         "query": {"range": {"@timestamp": {"gte": "now-5m"}}},
         "aggs": {
             "device_names": {
-                "terms": {"field": "device.name.keyword", "size": 100},
+                "terms": {"field": "device.name", "size": 100},
             }
         },
     }
