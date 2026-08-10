@@ -28,6 +28,9 @@ class CheckFailed(Exception):
     pass
 
 
+AGENT_POLICY = "synthetic-network"
+
+
 def check_asa_docs_recent(ctx: Ctx) -> str:
     r = ctx.es().post("/logs-cisco_asa.log-default/_count", json={
         "query": {"range": {"@timestamp": {"gte": "now-5m"}}}})
@@ -40,11 +43,19 @@ def check_asa_docs_recent(ctx: Ctx) -> str:
 
 
 def check_agents_online(ctx: Ctx) -> str:
+    rp = ctx.kb().get("/api/fleet/agent_policies",
+                      params={"kuery": f'name:"{AGENT_POLICY}"'})
+    policies = rp.json().get("items", [])
+    matching = [p for p in policies if p.get("name") == AGENT_POLICY]
+    if not matching:
+        raise CheckFailed(f'agent policy "{AGENT_POLICY}" not found')
+    policy_id = matching[0]["id"]
+
     r = ctx.kb().get("/api/fleet/agents", params={"kuery": "status:online"})
-    items = r.json().get("items", [])
+    items = [a for a in r.json().get("items", []) if a.get("policy_id") == policy_id]
     if not items:
-        raise CheckFailed("no online agents in Fleet")
-    return f"{len(items)} agent(s) online"
+        raise CheckFailed(f"no online agents enrolled in policy {AGENT_POLICY}")
+    return f"{len(items)} agent(s) online in policy {AGENT_POLICY}"
 
 
 CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [

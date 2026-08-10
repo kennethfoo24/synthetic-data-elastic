@@ -1,6 +1,7 @@
+import pytest
 import respx
 
-from synthsetup.validate import Ctx, check_agents_online, check_asa_docs_recent
+from synthsetup.validate import CheckFailed, Ctx, check_agents_online, check_asa_docs_recent
 
 CTX = Ctx(es_url="https://es.example.com", kibana_url="https://kb.example.com", api_key="k")
 
@@ -24,6 +25,28 @@ def test_asa_check_fails_with_zero_docs():
 
 @respx.mock
 def test_agents_online():
+    respx.get("https://kb.example.com/api/fleet/agent_policies").respond(
+        json={"items": [{"id": "pol-1", "name": "synthetic-network"}]})
     respx.get("https://kb.example.com/api/fleet/agents").respond(
-        json={"items": [{"status": "online", "policy_id": "p"}], "total": 1})
-    assert "online" in check_agents_online(CTX)
+        json={"items": [{"status": "online", "policy_id": "pol-1"}], "total": 1})
+    result = check_agents_online(CTX)
+    assert "online" in result
+    assert "synthetic-network" in result
+
+
+@respx.mock
+def test_agents_online_wrong_policy_filtered_out():
+    respx.get("https://kb.example.com/api/fleet/agent_policies").respond(
+        json={"items": [{"id": "pol-1", "name": "synthetic-network"}]})
+    respx.get("https://kb.example.com/api/fleet/agents").respond(
+        json={"items": [{"status": "online", "policy_id": "other-pol"}], "total": 1})
+    with pytest.raises(CheckFailed, match="no online agents enrolled"):
+        check_agents_online(CTX)
+
+
+@respx.mock
+def test_agents_online_policy_not_found():
+    respx.get("https://kb.example.com/api/fleet/agent_policies").respond(
+        json={"items": []})
+    with pytest.raises(CheckFailed, match="not found"):
+        check_agents_online(CTX)
