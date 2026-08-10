@@ -6,3 +6,4 @@ resources:
   - jobs/fleet-setup.yaml
   - elastic-agent.yaml
   - generators/syslog-gen.yaml
+  - generators/syslog-ios-gen.yaml

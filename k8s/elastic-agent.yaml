@@ -25,6 +25,7 @@ spec:
                 secretKeyRef: {name: agent-enrollment, key: FLEET_ENROLLMENT_TOKEN}
           ports:
             - {containerPort: 9001, protocol: UDP, name: asa-syslog}
+            - {containerPort: 9002, protocol: UDP, name: ios-syslog}
           resources:
             requests: {cpu: 200m, memory: 512Mi}
             limits: {memory: 1Gi}
@@ -38,3 +39,4 @@ spec:
   selector: {app: elastic-agent}
   ports:
     - {name: asa-syslog, port: 9001, protocol: UDP, targetPort: 9001}
+    - {name: ios-syslog, port: 9002, protocol: UDP, targetPort: 9002}

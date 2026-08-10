@@ -11,6 +11,7 @@ from synthsetup.fleet_client import FleetClient
 
 AGENT_POLICY = "synthetic-network"
 ASA_PORT = 9001
+IOS_PORT = 9002
 
 CISCO_ASA_INPUTS = {
     "cisco_asa-udp": {
@@ -19,6 +20,18 @@ CISCO_ASA_INPUTS = {
             "cisco_asa.log": {
                 "enabled": True,
                 "vars": {"udp_host": "0.0.0.0", "udp_port": ASA_PORT},
+            }
+        },
+    }
+}
+
+CISCO_IOS_INPUTS = {
+    "cisco_ios-udp": {
+        "enabled": True,
+        "streams": {
+            "cisco_ios.log": {
+                "enabled": True,
+                "vars": {"syslog_host": "0.0.0.0", "syslog_port": IOS_PORT},
             }
         },
     }
@@ -54,6 +67,11 @@ def main() -> None:
     fleet.ensure_package_policy("cisco-asa-syslog", policy_id, "cisco_asa", version,
                                 CISCO_ASA_INPUTS)
     print(f"cisco_asa {version}: integration policy ensured (dashboards installed)", flush=True)
+
+    version = fleet.latest_package_version("cisco_ios")
+    fleet.ensure_package_policy("cisco-ios-syslog", policy_id, "cisco_ios", version,
+                                CISCO_IOS_INPUTS)
+    print(f"cisco_ios {version}: integration policy ensured", flush=True)
 
     token = fleet.get_or_create_enrollment_token(policy_id)
     fleet_url = fleet.default_fleet_url()

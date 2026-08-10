@@ -7,22 +7,29 @@ from datetime import UTC, datetime
 
 from synthgen import GLOBAL_SEED
 from synthgen.common.topology import load_topology
-from synthgen.syslog_gen.asa_source import generate_batch
+from synthgen.syslog_gen import asa_source, ios_source
 from synthgen.syslog_gen.emitter import UdpSender
+
+_SOURCES = {
+    "syslog-asa": asa_source.generate_batch,
+    "syslog-ios": ios_source.generate_batch,
+}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="synthgen")
     sub = parser.add_subparsers(dest="mode", required=True)
-    asa_p = sub.add_parser("syslog-asa")
-    asa_p.add_argument("--target-host", required=True)
-    asa_p.add_argument("--target-port", type=int, required=True)
-    asa_p.add_argument("--topology", default="topology/network.yaml")
-    asa_p.add_argument("--seed", type=int, default=GLOBAL_SEED)
+    for mode in ("syslog-asa", "syslog-ios"):
+        p = sub.add_parser(mode)
+        p.add_argument("--target-host", required=True)
+        p.add_argument("--target-port", type=int, required=True)
+        p.add_argument("--topology", default="topology/network.yaml")
+        p.add_argument("--seed", type=int, default=GLOBAL_SEED)
     args = parser.parse_args()
 
     topo = load_topology(args.topology)
     sender = UdpSender(args.target_host, args.target_port)
+    generate_batch = _SOURCES[args.mode]
     print(f"synthgen {args.mode}: -> {args.target_host}:{args.target_port}", flush=True)
     sent = 0
     while True:

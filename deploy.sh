@@ -39,7 +39,9 @@ kubectl -n synthetic-network logs job/fleet-setup
 echo "==> agent + generators"
 kubectl apply -f k8s/elastic-agent.yaml
 sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-gen.yaml | kubectl apply -f -
+sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/syslog-ios-gen.yaml | kubectl apply -f -
 kubectl -n synthetic-network rollout status deploy/elastic-agent --timeout=300s
 kubectl -n synthetic-network rollout status deploy/syslog-gen --timeout=120s
+kubectl -n synthetic-network rollout status deploy/syslog-ios-gen --timeout=120s
 
 echo "==> done. Run 'make validate' in ~2 minutes to confirm data is flowing."
