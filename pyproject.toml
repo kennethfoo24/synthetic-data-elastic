@@ -19,8 +19,8 @@ dependencies = [
 # snmp: provides snmpsim-command-responder for the snmpsim Deployment.
 # pysmi and cryptography are required runtime deps of snmpsim/pysnmp not declared
 # in their package metadata.  pysnmp is pulled in transitively but listed explicitly.
-snmp = ["snmpsim>=1.1", "pysmi>=0.3", "pysnmp>=4.4", "cryptography>=3.0"]
-dev  = ["pytest>=8.0", "respx>=0.21", "ruff>=0.5", "snmpsim>=1.1", "pysmi>=0.3", "pysnmp>=4.4", "cryptography>=3.0"]
+snmp = ["snmpsim>=1.1", "pysmi>=0.3", "pysnmp>=4.4", "cryptography>=42"]
+dev  = ["pytest>=8.0", "respx>=0.21", "ruff>=0.5", "snmpsim>=1.1", "pysmi>=0.3", "pysnmp>=4.4", "cryptography>=42"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
