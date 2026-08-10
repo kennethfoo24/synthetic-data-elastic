@@ -19,6 +19,9 @@ docker manifest inspect "kennethfoo24/synthetic-netgen:$IMAGE_TAG" >/dev/null 2>
 }
 echo "==> pinning image kennethfoo24/synthetic-netgen:$IMAGE_TAG"
 
+echo "==> pipeline simulate gate"
+.venv/bin/python -m synthsetup.simulate || { echo "ERROR: wire formats failed pipeline simulation"; exit 1; }
+
 echo "==> namespace + credentials"
 kubectl apply -f k8s/namespace.yaml
 kubectl -n synthetic-network create secret generic elastic-credentials \

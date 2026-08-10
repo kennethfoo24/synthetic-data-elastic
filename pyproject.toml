@@ -21,6 +21,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "live: marks tests that require live Elastic credentials (skip with '-m not live')",
+]
 
 [tool.ruff]
 line-length = 100
