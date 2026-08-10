@@ -68,16 +68,16 @@
 
 ---
 
-### Task 5: SNMP — snmpsim + generic SNMP integration
+### Task 5: SNMP — snmpsim + **Logstash SNMP pipeline** (user decision 2026-08-11: no SNMP package exists in the Elastic registry — verified 0/14,698; Logstash chosen over synthesized metrics)
 
-**Files:** Create `snmp/generator/render.py` (renders `.snmprec` per device from topology), `snmp/data/` (committed rendered output), `k8s/generators/snmpsim.yaml`; modify `Dockerfile` (install snmpsim, copy snmp/), `fleet_setup.py`, `validate.py`; tests for the renderer.
+**Files:** Create `snmp/generator/render.py` (renders `.snmprec` per device from topology), `snmp/data/` (committed rendered output), `k8s/generators/snmpsim.yaml`, `k8s/logstash/` (Deployment + ConfigMap with `logstash.conf`); modify `Dockerfile` (install snmpsim, copy snmp/), `validate.py`, `deploy.sh`; tests for the renderer.
 
 **Contract:**
-- All non-database, non-meraki devices get SNMP profiles (18 devices): sysDescr/sysName/sysObjectID per vendor (HPE Aruba/iLO, Dell OS10/iDRAC/PowerStore, Cisco IOS/ASA strings), ifTable (2-8 interfaces with counters), CPU/memory gauges (vendor MIB OIDs where practical, else HOST-RESOURCES), plus for storage devices capacity OIDs. `sysName` MUST equal the topology device name (the MCP app resolves node identity from it).
-- snmpsim serves all devices from ONE pod, port 161/udp, **community string = device name** (snmpsim's community-based data-file selection); Service `snmpsim`.
-- Fleet: verify the `snmp` package's policy shape live (hosts/community/oids vars), then one package policy per vendor group or per device — whichever the package supports; poll interval 60s, targeting `snmpsim` service DNS with each device's community.
-- Gauges vary over time: snmpsim's `numeric` variation module (or pre-rendered time-series via the writecache module) — implementer picks the simplest snmpsim-native mechanism that makes CPU/mem/traffic counters move between polls; document choice.
-- Validate check: `metrics-snmp.*` docs in last 5m and ≥ 18 distinct hosts.
+- All non-database, non-meraki devices get SNMP profiles (18 devices): sysDescr/sysName/sysObjectID per vendor (HPE Aruba/iLO, Dell OS10/iDRAC/PowerStore, Cisco IOS/ASA strings), ifTable (2-8 interfaces with counters), CPU/memory gauges, storage capacity OIDs. `sysName` MUST equal the topology device name (the MCP app resolves node identity from it).
+- snmpsim serves all devices from ONE pod, port 161/udp, **community string = device name**; Service `snmpsim`.
+- **Logstash** (docker.elastic.co/logstash/logstash:9.x, official image, config via ConfigMap): `snmp` input (bundled logstash-integration-snmp) polling `snmpsim:161` once per 60s per device community, `get`/`walk` of the profile OIDs; output `elasticsearch` with `data_stream => true`, dataset `snmp.device`, namespace `default` → docs land in `metrics-snmp.device-default`. ES auth via the existing `elastic-credentials` secret (api_key). Enrich each event with `device.name` (= community), and vendor/role/site looked up from a rendered static translate table (generated from topology alongside the .snmprec files).
+- Gauges vary over time: snmpsim's `numeric` variation module (or the simplest snmpsim-native mechanism that makes counters move between polls); document choice.
+- Validate check: `metrics-snmp.device-default` docs in last 5m and ≥ 18 distinct `device.name` values.
 
 ---
 
