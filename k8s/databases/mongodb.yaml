@@ -87,9 +87,11 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 12
+          # 768Mi: mongod ~200-350Mi + mongosh readiness probe (Node.js, ~250-300Mi)
+          # can overlap briefly; 512Mi was tight enough to risk OOM on probe execution.
           resources:
             requests: {cpu: 100m, memory: 256Mi}
-            limits: {memory: 512Mi}
+            limits: {memory: 768Mi}
           volumeMounts:
             - name: data
               mountPath: /data/db
@@ -132,9 +134,10 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 12
+          # 768Mi: same reasoning as mongodb-prod above.
           resources:
             requests: {cpu: 100m, memory: 256Mi}
-            limits: {memory: 512Mi}
+            limits: {memory: 768Mi}
           volumeMounts:
             - name: data
               mountPath: /data/db
@@ -194,5 +197,5 @@ spec:
               fi
               echo "==> Done."
           resources:
-            requests: {cpu: 50m, memory: 64Mi}
-            limits: {memory: 128Mi}
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
