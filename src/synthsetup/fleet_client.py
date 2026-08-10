@@ -43,13 +43,28 @@ class FleetClient:
 
     def ensure_package_policy(self, name: str, policy_id: str, package: str,
                               version: str, inputs: dict) -> None:
-        r = self.http.post("/api/fleet/package_policies", json={
+        body = {
             "name": name, "policy_id": policy_id,
             "package": {"name": package, "version": version},
             "inputs": inputs,
-        })
+        }
+        r = self.http.post("/api/fleet/package_policies", json=body)
         if r.status_code == 409:
-            return  # already exists — idempotent success
+            # Policy already exists — look it up and PUT to reconcile config changes
+            r_lookup = self._check(
+                self.http.get("/api/fleet/package_policies",
+                              params={"kuery": f'name:"{name}"'}),
+                f"lookup package policy {name}",
+            )
+            items = r_lookup.json().get("items", [])
+            existing = next((i for i in items if i["name"] == name), None)
+            if existing is None:
+                raise FleetSetupError(f"lookup package policy {name}: not found after 409")
+            self._check(
+                self.http.put(f"/api/fleet/package_policies/{existing['id']}", json=body),
+                f"update package policy {name}",
+            )
+            return
         self._check(r, f"create package policy {name}")
 
     def get_or_create_enrollment_token(self, policy_id: str) -> str:

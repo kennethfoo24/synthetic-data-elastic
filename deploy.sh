@@ -9,6 +9,14 @@ for v in ES_URL KIBANA_URL ELASTIC_API_KEY; do
 done
 
 IMAGE_TAG=$(git rev-parse HEAD)
+if [ -n "$(git status --porcelain)" ]; then
+  echo "ERROR: working tree is dirty — commit or stash changes — deploys pin the HEAD image tag"
+  exit 1
+fi
+docker manifest inspect "kennethfoo24/synthetic-netgen:$IMAGE_TAG" >/dev/null 2>&1 || {
+  echo "ERROR: image tag $IMAGE_TAG not on Docker Hub yet — wait for CI (gh run watch)"
+  exit 1
+}
 echo "==> pinning image kennethfoo24/synthetic-netgen:$IMAGE_TAG"
 
 echo "==> namespace + credentials"
