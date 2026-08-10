@@ -46,19 +46,26 @@ def build_order_doc(rng: random.Random, tick: datetime) -> dict:
 
 
 def build_slow_scan_filter() -> dict:
-    """Return a MongoDB filter that forces a COLLSCAN on the notes field.
+    """Return a MongoDB filter that forces a full COLLSCAN on the notes field.
 
-    The regex targets all notes (``^note-``) so it matches every document and
-    MongoDB cannot use a collection scan shortcut.  There is intentionally no
-    index on ``notes``.
+    The regex matches every document so the driver cannot short-circuit after
+    returning the first hit (unlike find_one, count_documents must visit the
+    entire collection).  There is intentionally no index on ``notes``.
     """
     return {"notes": {"$regex": "^note-[0-9a-f]"}}
 
 
 def ensure_orders_collection(collection) -> None:
-    """Create an index on ``status`` for point-lookups (notes stays unindexed).
+    """Create indexes for point-lookups; TTL for retention; notes stays unindexed.
 
-    Idempotent — ``create_index`` is a no-op when the index already exists.
+    * status / order_id — indexed for normal read/update ops.
+    * created_at — TTL index (24 h) prevents unbounded growth against the 2 Gi
+      emptyDir backing store.
+    * notes — intentionally left unindexed so count_documents(slow_scan_filter)
+      forces a genuine COLLSCAN.
+
+    Idempotent — create_index is a no-op when the index already exists.
     """
-    collection.create_index("status", background=True)
-    collection.create_index("order_id", background=True)
+    collection.create_index("status")
+    collection.create_index("order_id")
+    collection.create_index("created_at", expireAfterSeconds=86400)

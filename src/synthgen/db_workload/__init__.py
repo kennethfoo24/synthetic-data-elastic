@@ -107,6 +107,9 @@ def run(seed: int = GLOBAL_SEED) -> None:
     mongo_last_slow: float = 0.0
     pg_last_slow: float = 0.0
     total_ticks = 0
+    # Hourly PG retention: track by hour so the DELETE fires once per clock hour
+    # (deterministic from wall-clock time, not a separate interval counter).
+    last_cleanup_hour: int = -1
 
     _log.info("db-workload started (seed=%d)", seed)
 
@@ -132,13 +135,15 @@ def run(seed: int = GLOBAL_SEED) -> None:
             except pymongo.errors.PyMongoError as exc:
                 _log.warning("mongo op failed: %s", exc)
 
-        # Mongo slow scan every ~5 min (full COLLSCAN on unindexed field)
+        # Mongo slow scan every ~5 min — count_documents visits EVERY doc
+        # (genuine COLLSCAN on unindexed notes field; find_one would short-circuit
+        # at the first match and never scan the full collection).
         now = time.monotonic()
         if now - mongo_last_slow >= MONGO_SLOW_INTERVAL:
             mongo_last_slow = now
             try:
-                collection.find_one(build_slow_scan_filter())
-                _log.info("mongo slow scan done")
+                n = collection.count_documents(build_slow_scan_filter())
+                _log.info("mongo slow scan done (matched %d docs)", n)
             except pymongo.errors.PyMongoError as exc:
                 _log.warning("mongo slow scan failed: %s", exc)
 
@@ -186,6 +191,24 @@ def run(seed: int = GLOBAL_SEED) -> None:
                 _log.info("pg slow scan done")
             except psycopg.Error as exc:
                 _log.warning("pg slow scan failed: %s", exc)
+                try:
+                    pg_conn.rollback()
+                except psycopg.Error:
+                    pass
+
+        # PG retention: once per clock hour DELETE rows older than 24 h.
+        # Deterministic from wall-clock time — fires exactly when the hour changes.
+        if tick.hour != last_cleanup_hour:
+            last_cleanup_hour = tick.hour
+            try:
+                with pg_conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM orders WHERE created_at < NOW() - INTERVAL '24 hours'"
+                    )
+                pg_conn.commit()
+                _log.info("pg retention cleanup done (hour=%d)", tick.hour)
+            except psycopg.Error as exc:
+                _log.warning("pg retention cleanup failed: %s", exc)
                 try:
                     pg_conn.rollback()
                 except psycopg.Error:

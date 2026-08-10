@@ -85,7 +85,15 @@ MONGODB_INPUTS = {
     "mongodb-mongodb/metrics": {
         "enabled": True,
         "vars": {
-            "hosts": ["mongodb-prod:27017", "mongodb-dr:27017"],
+            # mongodb-prod uses the replica-set URI so Fleet follows topology.
+            # mongodb-dr uses directConnection=true so Fleet bypasses topology
+            # discovery and scrapes the secondary directly — without it the driver
+            # always routes to the primary, making both entries report identical
+            # primary metrics and replstatus is useless for lag detection.
+            "hosts": [
+                "mongodb-prod:27017",
+                "mongodb://mongodb-dr:27017/?directConnection=true",
+            ],
         },
         "streams": {
             "mongodb.collstats": {"enabled": True, "vars": {"period": "10s"}},

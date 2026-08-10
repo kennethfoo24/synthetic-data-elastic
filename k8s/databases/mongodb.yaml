@@ -9,12 +9,22 @@
 #   keyfile would be stored in a plain ConfigMap provides no meaningful
 #   security uplift and complicates the init job significantly.
 #
+# Durability limitation (emptyDir):
+#   Both members use emptyDir for /data/db.  On pod restart the data directory
+#   is cleared.  The replica set configuration (replicaSetId) is also cleared,
+#   so a restart of mongodb-prod causes a replicaSetId mismatch on the
+#   secondary — the replica set must be re-initialised from scratch.
+#   Run `make reset-databases` to delete both pods and the init job and re-run
+#   the bootstrap sequence in the correct order.  For a synthetic lab that
+#   regenerates data continuously this is an acceptable trade-off.
+#
 # Members
 #   mongodb-prod  —  primary  (priority 1)
 #   mongodb-dr    —  secondary (priority 0, will never be elected primary)
 #
 # The mongodb-init Job is idempotent: it checks rs.status() before calling
-# rs.initiate(), so re-applying this manifest is safe after a cluster restart.
+# rs.initiate(), so re-applying this manifest is safe.  Use `make reset-databases`
+# if a primary pod restart has left the replica set in an inconsistent state.
 ---
 # Headless Service for mongodb-prod — provides stable DNS for the StatefulSet
 # and is the target hosts entry in the Fleet mongodb integration.
@@ -67,6 +77,16 @@ spec:
           args: ["--replSet", "rs0", "--bind_ip_all"]
           ports:
             - containerPort: 27017
+          readinessProbe:
+            exec:
+              command:
+                - mongosh
+                - --quiet
+                - --eval
+                - "db.adminCommand('ping').ok"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {memory: 512Mi}
@@ -75,7 +95,8 @@ spec:
               mountPath: /data/db
       volumes:
         - name: data
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 2Gi
 ---
 # mongodb-dr: secondary with priority 0 — will receive replication traffic but
 # will never be elected primary, ensuring the prod instance stays authoritative.
@@ -101,6 +122,16 @@ spec:
           args: ["--replSet", "rs0", "--bind_ip_all"]
           ports:
             - containerPort: 27017
+          readinessProbe:
+            exec:
+              command:
+                - mongosh
+                - --quiet
+                - --eval
+                - "db.adminCommand('ping').ok"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {memory: 512Mi}
@@ -109,7 +140,8 @@ spec:
               mountPath: /data/db
       volumes:
         - name: data
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 2Gi
 ---
 # mongodb-init: one-shot Job that forms the rs0 replica set.
 # Runs rs.initiate() only when the replica set is not yet configured.
