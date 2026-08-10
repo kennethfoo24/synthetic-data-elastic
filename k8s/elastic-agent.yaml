@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elastic-agent
+  namespace: synthetic-network
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: elastic-agent}
+  template:
+    metadata:
+      labels: {app: elastic-agent}
+    spec:
+      containers:
+        - name: elastic-agent
+          image: docker.elastic.co/elastic-agent/elastic-agent:9.1.3
+          env:
+            - name: FLEET_ENROLL
+              value: "1"
+            - name: FLEET_URL
+              valueFrom:
+                secretKeyRef: {name: agent-enrollment, key: FLEET_URL}
+            - name: FLEET_ENROLLMENT_TOKEN
+              valueFrom:
+                secretKeyRef: {name: agent-enrollment, key: FLEET_ENROLLMENT_TOKEN}
+          ports:
+            - {containerPort: 9001, protocol: UDP, name: asa-syslog}
+          resources:
+            requests: {cpu: 200m, memory: 512Mi}
+            limits: {memory: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elastic-agent
+  namespace: synthetic-network
+spec:
+  selector: {app: elastic-agent}
+  ports:
+    - {name: asa-syslog, port: 9001, protocol: UDP, targetPort: 9001}

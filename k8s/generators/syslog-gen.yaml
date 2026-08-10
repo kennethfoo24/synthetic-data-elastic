@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: syslog-gen
+  namespace: synthetic-network
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: syslog-gen}
+  template:
+    metadata:
+      labels: {app: syslog-gen}
+    spec:
+      containers:
+        - name: syslog-gen
+          image: kennethfoo24/synthetic-netgen:latest
+          args:
+            - syslog-asa
+            - --target-host=elastic-agent
+            - --target-port=9001
+            - --topology=/app/topology/network.yaml
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}

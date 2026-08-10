@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-setup
+  namespace: synthetic-network
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fleet-setup-secrets
+  namespace: synthetic-network
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, get, replace, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fleet-setup-secrets
+  namespace: synthetic-network
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fleet-setup-secrets
+subjects:
+  - kind: ServiceAccount
+    name: fleet-setup
+    namespace: synthetic-network
