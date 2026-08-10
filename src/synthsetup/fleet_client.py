@@ -53,7 +53,7 @@ class FleetClient:
             # Policy already exists — look it up and PUT to reconcile config changes
             r_lookup = self._check(
                 self.http.get("/api/fleet/package_policies",
-                              params={"kuery": f'name:"{name}"'}),
+                              params={"kuery": f'fleet-package-policies.name:"{name}"'}),
                 f"lookup package policy {name}",
             )
             items = r_lookup.json().get("items", [])
