@@ -50,11 +50,29 @@ def _ok_response(n: int) -> dict:
 # Happy path
 # ---------------------------------------------------------------------------
 
+# Pinned sample counts per source — update both here AND in simulate.py when
+# a new message type is added to a source's sample builder.
+#   cisco_asa : 4 — asa_302013, asa_302014, asa_106023, asa_113005
+#   cisco_ios : 5 — ios_login_success, ios_config_i, ios_link_updown,
+#                   ios_lineproto_updown, ios_logginghost
+#   panw      : 2 — panos_traffic, panos_threat
+_EXPECTED_DOC_COUNTS: dict[str, int] = {
+    "cisco_asa": 4,
+    "cisco_ios": 5,
+    "panw": 2,
+}
+
+
 @respx.mock
 def test_happy_path_all_sources_ok():
     _mock_versions()
     for pkg, dataset, sample_fn in REGISTRY:
         n = len(sample_fn())
+        # Assert pinned count so adding a format function without a sample fails fast.
+        assert n == _EXPECTED_DOC_COUNTS[pkg], (
+            f"{pkg}: expected {_EXPECTED_DOC_COUNTS[pkg]} sample docs, "
+            f"got {n} — update _EXPECTED_DOC_COUNTS and the sample builder"
+        )
         respx.post(_pipeline_url(pkg, dataset)).respond(json=_ok_response(n))
 
     errors = run_simulate(ES, KB, KEY)

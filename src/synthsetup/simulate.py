@@ -35,21 +35,31 @@ _PANW_SERIAL = "001901000001"
 # ---------------------------------------------------------------------------
 
 def _asa_samples() -> list[str]:
-    """3 representative Cisco ASA syslog lines."""
+    """4 representative Cisco ASA syslog lines — one per emitted message type.
+
+    Types covered: asa_302013, asa_302014, asa_106023, asa_113005
+    """
     return [
         asa.asa_302013(_TS, _ASA_HOST, 123456, "203.0.113.1", 12345, "10.20.5.11", 443),
         asa.asa_302014(_TS, _ASA_HOST, 123456, "203.0.113.1", 12345, "10.20.5.11", 443,
                        duration="0:02:30", byte_count=512000),
         asa.asa_106023(_TS, _ASA_HOST, "203.0.113.2", 22222, "10.20.5.11", 22),
+        asa.asa_113005(_TS, _ASA_HOST, "user5", "203.0.113.3"),
     ]
 
 
 def _ios_samples() -> list[str]:
-    """3 representative Cisco IOS syslog lines."""
+    """5 representative Cisco IOS syslog lines — one per emitted message type.
+
+    Types covered: ios_login_success, ios_config_i, ios_link_updown,
+                   ios_lineproto_updown, ios_logginghost
+    """
     return [
         ios.ios_login_success(_TS, _IOS_HOST, 1001, "admin1", "10.10.1.5"),
         ios.ios_config_i(_TS, _IOS_HOST, 1002, "admin1"),
         ios.ios_link_updown(_TS, _IOS_HOST, 1003, "up", "GigabitEthernet0/1"),
+        ios.ios_lineproto_updown(_TS, _IOS_HOST, 1004, "up", "GigabitEthernet0/1"),
+        ios.ios_logginghost(_TS, _IOS_HOST, 1005, "10.10.0.100"),
     ]
 
 
