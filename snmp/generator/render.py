@@ -391,7 +391,7 @@ output {{
     # LS_ES_URL and LS_API_KEY are exported by the Deployment entrypoint shell.
     # LS_API_KEY = base64-decoded ELASTIC_API_KEY (decoded "id:key" form required
     # by the Logstash elasticsearch output api_key parameter).
-    hosts    => ["${{LS_ES_URL}}"]
+    hosts    => ["${{LS_ES_URL}}:443"]
     api_key  => "${{LS_API_KEY}}"
     data_stream           => true
     data_stream_type      => "metrics"
