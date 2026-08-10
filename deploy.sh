@@ -35,6 +35,9 @@ kubectl -n synthetic-network create secret generic elastic-credentials \
 echo "==> databases (MongoDB replica set + PostgreSQL streaming standby)"
 # Apply database manifests BEFORE the fleet-setup job so that the integration
 # targets (mongodb-prod, postgres-prod) are reachable when Fleet polls them.
+# Delete any stale mongodb-init Job first — a Job's pod template is immutable,
+# so a leftover Job from a failed prior run causes "field is immutable" on apply.
+kubectl -n synthetic-network delete job mongodb-init --ignore-not-found
 kubectl apply -f k8s/databases/mongodb.yaml
 kubectl apply -f k8s/databases/postgres.yaml
 kubectl -n synthetic-network rollout status statefulset/mongodb-prod --timeout=120s
