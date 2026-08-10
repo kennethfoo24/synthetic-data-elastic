@@ -30,7 +30,7 @@ def generate_batch(topo: Topology, t: datetime, seed: int = GLOBAL_SEED) -> list
             if roll < 0.45:
                 lines.append(asa.asa_302013(t, dev.name, conn_id, src_ip, src_port, dst.ip, 443))
             elif roll < 0.85:
-                dur = f"0:{rng.randint(0, 9)}:{rng.randint(10, 59)}"
+                dur = f"0:{rng.randint(0, 9):02d}:{rng.randint(10, 59):02d}"
                 lines.append(asa.asa_302014(t, dev.name, conn_id, src_ip, src_port, dst.ip, 443,
                                             duration=dur, byte_count=rng.randint(500, 2_000_000)))
             elif roll < 0.97:

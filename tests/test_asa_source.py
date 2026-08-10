@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 
 from synthgen.common.topology import load_topology
@@ -25,3 +26,9 @@ def test_mix_includes_denies():
     lines = [l for s in range(60) for l in generate_batch(TOPO, PEAK.replace(second=s))]
     assert any("106023" in l for l in lines)
     assert any("302013" in l for l in lines)
+
+def test_teardown_duration_zero_padded():
+    lines = [l for s in range(120) for l in generate_batch(TOPO, PEAK.replace(second=s % 60, minute=s // 60))]
+    durations = [m.group(1) for l in lines for m in [re.search(r"duration (\S+)", l)] if m]
+    assert durations, "no teardown lines generated"
+    assert all(re.fullmatch(r"\d+:\d{2}:\d{2}", d) for d in durations)
