@@ -56,12 +56,12 @@ def _ok_response(n: int) -> dict:
 #   cisco_asa    : 4 — asa_302013, asa_302014, asa_106023, asa_113005
 #   cisco_ios    : 5 — ios_login_success, ios_config_i, ios_link_updown,
 #                      ios_lineproto_updown, ios_logginghost
-#   panw         : 2 — panos_traffic, panos_threat
+#   panw         : 3 — panos_traffic, panos_threat, panos_system
 #   cisco_meraki : 3 — meraki_flow, meraki_url, meraki_event_association
 _EXPECTED_DOC_COUNTS: dict[str, int] = {
     "cisco_asa": 4,
     "cisco_ios": 5,
-    "panw": 2,
+    "panw": 3,
     "cisco_meraki": 3,
 }
 

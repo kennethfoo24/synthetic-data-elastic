@@ -66,7 +66,10 @@ def _ios_samples() -> list[str]:
 
 
 def _panw_samples() -> list[str]:
-    """2 representative PAN-OS syslog lines (TRAFFIC + THREAT)."""
+    """3 representative PAN-OS syslog lines — one per emitted log type.
+
+    Types covered: panos_traffic, panos_threat, panos_system
+    """
     return [
         panw.panos_traffic(
             _TS, _PANW_HOST, _PANW_SERIAL,
@@ -78,6 +81,11 @@ def _panw_samples() -> list[str]:
             _TS, _PANW_HOST, _PANW_SERIAL,
             "203.0.113.5", "10.10.5.11", 44321, 443, "tcp",
             subtype="vulnerability",
+        ),
+        panw.panos_system(
+            _TS, _PANW_HOST, _PANW_SERIAL,
+            eventid="auth-success",
+            description="Admin authentication succeeded",
         ),
     ]
 

@@ -195,3 +195,44 @@ def test_panos_timestamp_format_in_csv():
     assert "2026/08/11 12:34:56" in msg, (
         f"PAN-OS timestamp 2026/08/11 12:34:56 not found in: {msg[:120]!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# SYSTEM log tests
+# ---------------------------------------------------------------------------
+
+SYSTEM_FIELD_COUNT = 23
+
+
+def test_system_header_starts_with_pri14():
+    msg = panw.panos_system(TS, HOSTNAME, SERIAL)
+    assert msg.startswith("<14>"), f"Expected <14> PRI, got: {msg[:10]}"
+
+
+def test_system_field_count():
+    msg = panw.panos_system(TS, HOSTNAME, SERIAL)
+    fields = _csv_fields(msg)
+    assert len(fields) == SYSTEM_FIELD_COUNT, (
+        f"Expected {SYSTEM_FIELD_COUNT} CSV fields, got {len(fields)}\n"
+        f"Fields: {fields}"
+    )
+
+
+def test_system_key_positions():
+    msg = panw.panos_system(TS, HOSTNAME, SERIAL,
+                            subtype="config",
+                            eventid="auth-success",
+                            severity="informational")
+    f = _csv_fields(msg)
+    assert f[3] == "SYSTEM",         f"[3] type expected SYSTEM, got {f[3]!r}"
+    assert f[4] == "config",         f"[4] subtype expected config, got {f[4]!r}"
+    assert f[7] == "vsys1",          f"[7] vsys expected vsys1, got {f[7]!r}"
+    assert f[8] == "auth-success",   f"[8] eventid expected auth-success, got {f[8]!r}"
+    assert f[13] == "informational", f"[13] severity expected informational, got {f[13]!r}"
+    assert f[22] == HOSTNAME,        f"[22] device_name expected {HOSTNAME}, got {f[22]!r}"
+
+
+def test_system_determinism():
+    kwargs = {"ts": TS, "hostname": HOSTNAME, "serial": SERIAL,
+              "eventid": "general", "description": "System operational check passed"}
+    assert panw.panos_system(**kwargs) == panw.panos_system(**kwargs)

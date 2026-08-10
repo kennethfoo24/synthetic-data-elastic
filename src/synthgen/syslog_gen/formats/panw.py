@@ -400,3 +400,82 @@ def panos_threat(
     assert len(fields) == 78, f"BUG: THREAT field count is {len(fields)}, expected 78"
     ts_str = _rfc3164_ts(ts)
     return f"<{_PRIORITY}>{ts_str} {hostname} {_csv(fields)}"
+
+
+# ---------------------------------------------------------------------------
+# SYSTEM log — 23 fields
+# ---------------------------------------------------------------------------
+
+def panos_system(
+    ts: datetime,
+    hostname: str,
+    serial: str,
+    *,
+    subtype: str = "general",
+    eventid: str = "general",
+    severity: str = "informational",
+    description: str = "System event logged",
+    seq_no: int = 3000,
+) -> str:
+    """Return a PAN-OS 10.2 SYSTEM syslog line (23 CSV fields).
+
+    Key positions (0-indexed from CSV start):
+      [3] type="SYSTEM"  [4] subtype  [7] vsys  [8] eventid
+      [13] severity  [22] device_name
+    """
+    rx = _panos_ts(ts)
+    gen = _panos_ts(ts)
+
+    # fmt: off
+    fields: list[tuple[str, object]] = [
+        # 0
+        ("future_use_1",   "1"),
+        # 1
+        ("receive_time",   rx),
+        # 2
+        ("serial",         serial),
+        # 3
+        ("type",           "SYSTEM"),
+        # 4
+        ("subtype",        subtype),
+        # 5
+        ("future_use_2",   ""),
+        # 6
+        ("generated_time", gen),
+        # 7
+        ("vsys",           "vsys1"),
+        # 8
+        ("eventid",        eventid),
+        # 9
+        ("object",         ""),
+        # 10
+        ("future_use_3",   ""),
+        # 11
+        ("future_use_4",   ""),
+        # 12
+        ("module",         ""),
+        # 13
+        ("severity",       severity),
+        # 14
+        ("description",    description),
+        # 15
+        ("seq_no",         seq_no),
+        # 16
+        ("action_flags",   "0x0"),
+        # 17
+        ("dg_hier_level_1", ""),
+        # 18
+        ("dg_hier_level_2", ""),
+        # 19
+        ("dg_hier_level_3", ""),
+        # 20
+        ("dg_hier_level_4", ""),
+        # 21
+        ("vsys_name",      ""),
+        # 22
+        ("device_name",    hostname),
+    ]
+    # fmt: on
+    assert len(fields) == 23, f"BUG: SYSTEM field count is {len(fields)}, expected 23"
+    ts_str = _rfc3164_ts(ts)
+    return f"<{_PRIORITY}>{ts_str} {hostname} {_csv(fields)}"

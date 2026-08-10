@@ -1,11 +1,13 @@
 """PAN-OS syslog generator for palo-fw-prod.
 
-Emits TRAFFIC (subtype=end) and THREAT records via UDP syslog, matching the
-panw Elastic integration's CSV field expectations.
+Emits TRAFFIC (subtype=end), THREAT, and SYSTEM records via UDP syslog,
+matching the panw Elastic integration's CSV field expectations.
 
 Only ``palo-fw-prod`` (vendor_os=panos) emits.  TRAFFIC records are derived
 from cross-site (production→dr) topology flows + the VPN-inbound direction of
-the site-vpn flow.  THREAT records are generated rarely (~1/min).
+the site-vpn flow.  THREAT records are generated rarely (~1/min).  SYSTEM
+records are emitted once every ~2 minutes, rotating through a small set of
+operational event types.
 """
 from __future__ import annotations
 
@@ -31,6 +33,17 @@ _THREAT_SUBTYPES = ["vulnerability", "spyware"]
 _THREAT_SEVERITIES = ["high", "medium", "critical"]
 _APPS_EGRESS = ["ssl", "web-browsing", "unknown-tcp", "quic"]
 _APPS_VPN = ["ipsec", "ike"]
+
+# SYSTEM events: (subtype, eventid, severity, description)
+# Description must contain no commas (plain CSV, not quoted).
+_SYSTEM_EVENTS = [
+    ("general",  "general",      "informational", "System operational check passed"),
+    ("general",  "auth-success", "informational", "Admin authentication succeeded"),
+    ("config",   "general",      "informational", "Configuration committed to device"),
+]
+
+# Emit one SYSTEM record every 120 seconds (deterministic modulo check).
+_SYSTEM_INTERVAL_S = 120
 
 
 def _egress_flows(topo: Topology) -> list[Flow]:
@@ -122,6 +135,20 @@ def generate_batch(topo: Topology, t: datetime, seed: int = GLOBAL_SEED) -> list
                 elapsed=elapsed,
                 seq_no=rng.randint(100_000, 9_999_999),
             ))
+
+    # ── Sparse SYSTEM records (~1 every 2 minutes, deterministic) ───────────
+    if int(t.timestamp()) % _SYSTEM_INTERVAL_S == 0:
+        event = _SYSTEM_EVENTS[int(t.timestamp() // _SYSTEM_INTERVAL_S) % len(_SYSTEM_EVENTS)]
+        lines.append(panw.panos_system(
+            ts=t,
+            hostname=fw.name,
+            serial=_SERIAL,
+            subtype=event[0],
+            eventid=event[1],
+            severity=event[2],
+            description=event[3],
+            seq_no=rng.randint(100_000, 9_999_999),
+        ))
 
     # ── Rare THREAT records ─────────────────────────────────────────────────
     if rng.random() < _THREAT_PROB_PER_SEC:
