@@ -9,3 +9,5 @@ resources:
   - generators/syslog-ios-gen.yaml
   - generators/syslog-panw-gen.yaml
   - generators/netflow-gen.yaml
+  - generators/snmpsim.yaml
+  - logstash/logstash.yaml

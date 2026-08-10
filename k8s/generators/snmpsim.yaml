@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snmpsim
+  namespace: synthetic-network
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: snmpsim}
+  template:
+    metadata:
+      labels: {app: snmpsim}
+    spec:
+      containers:
+        - name: snmpsim
+          # Same synthetic-netgen image; snmpsim is installed via the [snmp]
+          # optional dependency group.  The default ENTRYPOINT is overridden to
+          # run the snmpsim command responder instead of synthgen.
+          #
+          # Community-string → file mapping: snmpsim v1.x flat-file mode maps
+          # community "device-name" to /app/snmp/data/device-name.snmprec.
+          # Each device's .snmprec is rendered by snmp/generator/render.py.
+          image: kennethfoo24/synthetic-netgen:latest
+          command: ["snmpsim-command-responder"]
+          args:
+            - --data-dir=/app/snmp/data
+            - --agent-udpv4-endpoint=0.0.0.0:161
+          ports:
+            - containerPort: 161
+              protocol: UDP
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: snmpsim
+  namespace: synthetic-network
+spec:
+  selector: {app: snmpsim}
+  ports:
+    - port: 161
+      targetPort: 161
+      protocol: UDP

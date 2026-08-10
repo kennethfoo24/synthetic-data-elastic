@@ -125,6 +125,39 @@ def check_netflow_edges(ctx: Ctx) -> str:
     return f"{pair_count} distinct src→dst flow pairs in last 5m"
 
 
+def check_snmp_devices(ctx: Ctx) -> str:
+    """Verify SNMP metrics flowing: docs in last 5m and ≥ 18 distinct device.name values.
+
+    Logstash polls snmpsim every 60 s via the bundled logstash-integration-snmp plugin
+    and writes metrics to data stream metrics-snmp.device-default.  The terms agg on
+    device.name (keyword sub-field) confirms all topology devices are represented.
+    """
+    body = {
+        "size": 0,
+        "query": {"range": {"@timestamp": {"gte": "now-5m"}}},
+        "aggs": {
+            "device_names": {
+                "terms": {"field": "device.name.keyword", "size": 100},
+            }
+        },
+    }
+    r = ctx.es().post("/metrics-snmp.device-default/_search", json=body)
+    if r.status_code == 404:
+        raise CheckFailed("data stream metrics-snmp.device-default does not exist")
+    data = r.json()
+    total = data.get("hits", {}).get("total", {}).get("value", 0)
+    if total == 0:
+        raise CheckFailed("0 docs in metrics-snmp.device-default in last 5m")
+    buckets = data.get("aggregations", {}).get("device_names", {}).get("buckets", [])
+    distinct = len(buckets)
+    if distinct < 18:
+        raise CheckFailed(
+            f"only {distinct} distinct device.name values in metrics-snmp.device-default"
+            " (need ≥ 18)"
+        )
+    return f"{total} SNMP metric docs in last 5m, {distinct} distinct devices"
+
+
 CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("agent online in Fleet", check_agents_online),
     ("ASA logs flowing", check_asa_docs_recent),
@@ -132,6 +165,7 @@ CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("PANW logs flowing", check_panw_docs_recent),
     ("NetFlow docs flowing", check_netflow_docs_recent),
     ("NetFlow edge pairs >= 10", check_netflow_edges),
+    ("SNMP metrics flowing", check_snmp_devices),
 ]
 
 

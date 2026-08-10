@@ -1,0 +1,101 @@
+devices:
+  cisco-asa-dr:
+    ip: 10.20.0.1
+    role: firewall
+    site: dr
+    vendor: cisco
+  cisco-rtr-core-01:
+    ip: 10.10.1.1
+    role: router
+    site: production
+    vendor: cisco
+  cisco-rtr-core-02:
+    ip: 10.10.1.2
+    role: router
+    site: production
+    vendor: cisco
+  cisco-rtr-dr:
+    ip: 10.20.1.1
+    role: router
+    site: dr
+    vendor: cisco
+  cisco-sw-access-01:
+    ip: 10.10.2.1
+    role: switch
+    site: production
+    vendor: cisco
+  cisco-sw-access-02:
+    ip: 10.10.2.2
+    role: switch
+    site: production
+    vendor: cisco
+  cisco-sw-access-03:
+    ip: 10.10.2.3
+    role: switch
+    site: production
+    vendor: cisco
+  cisco-sw-dr-01:
+    ip: 10.20.2.1
+    role: switch
+    site: dr
+    vendor: cisco
+  dell-srv-01:
+    ip: 10.10.5.21
+    role: server
+    site: production
+    vendor: dell
+  dell-srv-02:
+    ip: 10.10.5.22
+    role: server
+    site: production
+    vendor: dell
+  dell-storage-01:
+    ip: 10.10.6.21
+    role: storage
+    site: production
+    vendor: dell
+  dell-storage-dr:
+    ip: 10.20.6.21
+    role: storage
+    site: dr
+    vendor: dell
+  dell-sw-01:
+    ip: 10.10.2.11
+    role: switch
+    site: production
+    vendor: dell
+  dell-sw-dr:
+    ip: 10.20.2.2
+    role: switch
+    site: dr
+    vendor: dell
+  hpe-srv-01:
+    ip: 10.10.5.11
+    role: server
+    site: production
+    vendor: hpe
+  hpe-srv-02:
+    ip: 10.10.5.12
+    role: server
+    site: production
+    vendor: hpe
+  hpe-srv-dr-01:
+    ip: 10.20.5.11
+    role: server
+    site: dr
+    vendor: hpe
+  hpe-storage-01:
+    ip: 10.10.6.11
+    role: storage
+    site: production
+    vendor: hpe
+  hpe-sw-01:
+    ip: 10.10.2.10
+    role: switch
+    site: production
+    vendor: hpe
+  palo-fw-prod:
+    ip: 10.10.0.1
+    role: firewall
+    site: production
+    vendor: paloalto

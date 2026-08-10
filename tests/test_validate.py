@@ -10,6 +10,7 @@ from synthsetup.validate import (
     check_netflow_docs_recent,
     check_netflow_edges,
     check_panw_docs_recent,
+    check_snmp_devices,
 )
 
 CTX = Ctx(es_url="https://es.example.com", kibana_url="https://kb.example.com", api_key="k")
@@ -192,3 +193,68 @@ def test_netflow_edges_fails_when_stream_missing():
         status_code=404, json={})
     with pytest.raises(CheckFailed, match="does not exist"):
         check_netflow_edges(CTX)
+
+
+# ---------------------------------------------------------------------------
+# SNMP devices check
+# ---------------------------------------------------------------------------
+
+def _snmp_search_response(total: int, device_names: list[str]) -> dict:
+    """Build a fake ES search response with terms agg for device.name.keyword."""
+    return {
+        "hits": {"total": {"value": total}},
+        "aggregations": {
+            "device_names": {
+                "buckets": [{"key": n, "doc_count": 3} for n in device_names],
+            }
+        },
+    }
+
+
+@respx.mock
+def test_snmp_check_passes_with_20_devices():
+    names = [f"device-{i:02d}" for i in range(20)]
+    respx.post(
+        "https://es.example.com/metrics-snmp.device-default/_search"
+    ).respond(json=_snmp_search_response(600, names))
+    result = check_snmp_devices(CTX)
+    assert "600" in result
+    assert "20" in result
+
+
+@respx.mock
+def test_snmp_check_passes_at_exactly_18_devices():
+    names = [f"device-{i:02d}" for i in range(18)]
+    respx.post(
+        "https://es.example.com/metrics-snmp.device-default/_search"
+    ).respond(json=_snmp_search_response(54, names))
+    result = check_snmp_devices(CTX)
+    assert "18" in result
+
+
+@respx.mock
+def test_snmp_check_fails_with_zero_docs():
+    respx.post(
+        "https://es.example.com/metrics-snmp.device-default/_search"
+    ).respond(json=_snmp_search_response(0, []))
+    with pytest.raises(CheckFailed, match="0 docs"):
+        check_snmp_devices(CTX)
+
+
+@respx.mock
+def test_snmp_check_fails_with_fewer_than_18_devices():
+    names = [f"device-{i:02d}" for i in range(15)]
+    respx.post(
+        "https://es.example.com/metrics-snmp.device-default/_search"
+    ).respond(json=_snmp_search_response(45, names))
+    with pytest.raises(CheckFailed, match="need"):
+        check_snmp_devices(CTX)
+
+
+@respx.mock
+def test_snmp_check_fails_when_stream_missing():
+    respx.post(
+        "https://es.example.com/metrics-snmp.device-default/_search"
+    ).respond(status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_snmp_devices(CTX)

@@ -51,4 +51,13 @@ kubectl -n synthetic-network rollout status deploy/syslog-ios-gen --timeout=120s
 kubectl -n synthetic-network rollout status deploy/syslog-panw-gen --timeout=120s
 kubectl -n synthetic-network rollout status deploy/netflow-gen --timeout=120s
 
+echo "==> SNMP: snmpsim simulator + Logstash SNMP pipeline"
+# snmpsim uses the synthetic-netgen image (snmpsim installed via [snmp] group);
+# SHA-pin applies only to this image, not to the official Logstash image.
+sed "s|synthetic-netgen:latest|synthetic-netgen:$IMAGE_TAG|" k8s/generators/snmpsim.yaml | kubectl apply -f -
+# Logstash uses the official Elastic image (already pinned to 9.1.3 in the manifest).
+kubectl apply -f k8s/logstash/logstash.yaml
+kubectl -n synthetic-network rollout status deploy/snmpsim --timeout=120s
+kubectl -n synthetic-network rollout status deploy/logstash --timeout=300s
+
 echo "==> done. Run 'make validate' in ~2 minutes to confirm data is flowing."
