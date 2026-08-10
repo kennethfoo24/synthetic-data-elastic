@@ -30,7 +30,11 @@ CISCO_ASA_INPUTS = {
                 "vars": {"udp_host": "0.0.0.0", "udp_port": ASA_PORT},
             }
         },
-    }
+    },
+    # Disable default TCP/logfile inputs to avoid port 9001 collision between
+    # packages when multiple syslog integrations are installed in the same agent.
+    "cisco_asa-tcp": {"enabled": False},
+    "cisco_asa-logfile": {"enabled": False},
 }
 
 CISCO_IOS_INPUTS = {
@@ -42,7 +46,10 @@ CISCO_IOS_INPUTS = {
                 "vars": {"syslog_host": "0.0.0.0", "syslog_port": IOS_PORT},
             }
         },
-    }
+    },
+    # Disable default TCP/logfile inputs to avoid port collision between packages.
+    "cisco_ios-tcp": {"enabled": False},
+    "cisco_ios-logfile": {"enabled": False},
 }
 
 PANW_INPUTS = {
@@ -59,7 +66,10 @@ PANW_INPUTS = {
                 },
             }
         },
-    }
+    },
+    # Disable default TCP/logfile inputs to avoid port collision between packages.
+    "panw-tcp": {"enabled": False},
+    "panw-logfile": {"enabled": False},
 }
 
 NETFLOW_INPUTS = {
@@ -107,6 +117,9 @@ CISCO_MERAKI_INPUTS = {
             }
         },
     },
+    # Disable default TCP/logfile inputs to avoid port collision between packages.
+    "cisco_meraki-tcp": {"enabled": False},
+    "cisco_meraki-logfile": {"enabled": False},
 }
 
 # MongoDB replica set: both members listed so Fleet scrapes metrics from
@@ -140,7 +153,10 @@ MONGODB_INPUTS = {
 }
 
 # PostgreSQL primary only for metrics (Fleet agent reads from the primary).
-# hosts format is host:port (separate username/password vars per pkg schema).
+# Full DSN form required so we can append sslmode=disable — the in-cluster
+# PostgreSQL StatefulSet does not have SSL configured, and without this the
+# postgresql.activity stream reports "pq: SSL is not enabled" and fails.
+# Username/password are kept as separate vars (Fleet merges them into the DSN).
 # pg_stat_statements must be loaded on the server (done via -c arg in the
 # StatefulSet manifest) for postgresql.statement metrics to work.
 # Log collection (postgresql.log) is out of scope for Plan 2 — same gap as
@@ -149,7 +165,7 @@ POSTGRESQL_INPUTS = {
     "postgresql-postgresql/metrics": {
         "enabled": True,
         "vars": {
-            "hosts": ["postgres-prod:5432"],
+            "hosts": ["postgres://postgres-prod:5432?sslmode=disable"],
             "username": "postgres",
             "password": _PG_DEVPASS,
         },
