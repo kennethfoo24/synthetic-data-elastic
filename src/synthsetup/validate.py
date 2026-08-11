@@ -240,32 +240,72 @@ def check_panw_log_types(ctx: Ctx) -> str:
 
 
 def check_meraki_event_variety(ctx: Ctx) -> str:
-    """Verify Meraki webhook event variety: >= 2 distinct event.action values in last 15m.
+    """Verify Meraki webhook events parse cleanly and show >= 2 distinct alert types.
 
-    The meraki_webhook generator posts events with rotating alertType values
-    (mapped to event.action by the cisco_meraki integration).  A single value
-    in 15 minutes indicates the generator is stuck or the field is not mapping.
+    Two sub-checks:
+
+    1. **Pipeline-error guard** — any doc with ``event.kind=pipeline_error`` in
+       the last 15 minutes means the payload schema is wrong.  Fail hard so
+       wire-format regressions are caught immediately.
+
+    2. **Alert-type variety** — aggregates on ``cisco_meraki.alert_type`` (the
+       ECS-mapped field the pipeline produces).  If that returns zero buckets,
+       falls back to the raw ``json.alertType`` keyword.  Requires >= 2 distinct
+       values so we know the generator is rotating alert types correctly.
     """
-    body = {
-        "size": 0,
-        "query": {"range": {"@timestamp": {"gte": "now-15m"}}},
-        "aggs": {
-            "event_types": {
-                "terms": {"field": "event.action", "size": 20},
+    ds = "logs-cisco_meraki.events-default"
+
+    # 1. Pipeline-error guard (last 15 minutes)
+    r_err = ctx.es().post(f"/{ds}/_count", json={
+        "query": {
+            "bool": {
+                "must": [
+                    {"term": {"event.kind": "pipeline_error"}},
+                    {"range": {"@timestamp": {"gte": "now-15m"}}},
+                ]
             }
-        },
-    }
-    r = ctx.es().post("/logs-cisco_meraki.events-default/_search", json=body)
-    if r.status_code == 404:
-        raise CheckFailed("data stream logs-cisco_meraki.events-default does not exist")
-    buckets = r.json().get("aggregations", {}).get("event_types", {}).get("buckets", [])
-    distinct = len(buckets)
-    if distinct < 2:
+        }
+    })
+    if r_err.status_code == 404:
+        raise CheckFailed(f"data stream {ds} does not exist")
+    err_count = r_err.json().get("count", 0)
+    if err_count > 0:
         raise CheckFailed(
-            f"only {distinct} distinct event.action values in logs-cisco_meraki.events-default"
-            " in last 15m (need ≥ 2)"
+            f"{err_count} pipeline_error doc(s) in {ds} in last 15m — "
+            "fix the webhook payload or ingest pipeline"
         )
-    return f"{distinct} distinct Meraki event types in last 15m"
+
+    # 2. Alert-type variety
+    def _agg_alert_types(field: str) -> list[str]:
+        body = {
+            "size": 0,
+            "query": {"range": {"@timestamp": {"gte": "now-5m"}}},
+            "aggs": {"alert_types": {"terms": {"field": field, "size": 20}}},
+        }
+        r = ctx.es().post(f"/{ds}/_search", json=body)
+        if r.status_code != 200:
+            return []
+        return [
+            b["key"]
+            for b in r.json()
+            .get("aggregations", {})
+            .get("alert_types", {})
+            .get("buckets", [])
+        ]
+
+    values = _agg_alert_types("cisco_meraki.alert_type")
+    used_field = "cisco_meraki.alert_type"
+    if not values:
+        values = _agg_alert_types("json.alertType")
+        used_field = "json.alertType"
+
+    if len(values) < 2:
+        raise CheckFailed(
+            f"only {len(values)} distinct alert type(s) in {ds} "
+            f"(field={used_field}, need >= 2)"
+        )
+    sample = ", ".join(sorted(values)[:3])
+    return f"{len(values)} distinct Meraki alert types in last 5m ({used_field}): {sample}"
 
 
 def check_ios_mnemonic_variety(ctx: Ctx) -> str:

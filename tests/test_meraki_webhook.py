@@ -25,13 +25,75 @@ def test_build_events_count():
     assert len(events) == 3
 
 
+_REQUIRED_FIELDS = (
+    # Core identity
+    "version", "sharedSecret",
+    # Timing
+    "sentAt", "occurredAt",
+    # Organisation
+    "organizationId", "organizationName", "organizationUrl",
+    # Network
+    "networkId", "networkName", "networkUrl",
+    # Device — full set required by the ingest pipeline
+    "deviceSerial", "deviceName", "deviceMac", "deviceModel",
+    "deviceUrl", "deviceTags",
+    # Alert
+    "alertId", "alertType", "alertTypeId", "alertLevel", "alertData",
+)
+
+
 def test_build_events_schema_fields_present():
     rng = random.Random(0)
-    event = build_events(_TS, rng, DEFAULT_SECRET, 1)[0]
-    for field in ("version", "sharedSecret", "sentAt", "organizationId",
-                  "networkId", "networkName", "deviceSerial", "deviceName",
-                  "alertType", "occurredAt"):
-        assert field in event, f"missing field: {field}"
+    events = build_events(_TS, rng, DEFAULT_SECRET, 3)
+    for i, event in enumerate(events):
+        for field in _REQUIRED_FIELDS:
+            assert field in event, f"event[{i}] missing field: {field}"
+
+
+def test_build_events_device_mac_format():
+    rng = random.Random(0)
+    events = build_events(_TS, rng, DEFAULT_SECRET, 10)
+    for e in events:
+        mac = e["deviceMac"]
+        assert len(mac.split(":")) == 6, f"bad MAC format: {mac}"
+
+
+def test_build_events_device_mac_matches_device():
+    expected = {"meraki-ap-01": "aa:bb:cc:dd:ee:01", "meraki-ap-02": "aa:bb:cc:dd:ee:02"}
+    rng = random.Random(0)
+    events = build_events(_TS, rng, DEFAULT_SECRET, 20)
+    for e in events:
+        assert e["deviceMac"] == expected[e["deviceName"]]
+
+
+def test_build_events_alert_type_id_derived():
+    rng = random.Random(0)
+    events = build_events(_TS, rng, DEFAULT_SECRET, 10)
+    for e in events:
+        # alertTypeId must be lowercase with spaces replaced by underscores
+        expected_id = e["alertType"].lower().replace(" ", "_")
+        assert e["alertTypeId"] == expected_id
+
+
+def test_build_events_alert_level_is_informational():
+    rng = random.Random(0)
+    events = build_events(_TS, rng, DEFAULT_SECRET, 5)
+    for e in events:
+        assert e["alertLevel"] == "informational"
+
+
+def test_build_events_device_tags_is_list():
+    rng = random.Random(0)
+    events = build_events(_TS, rng, DEFAULT_SECRET, 3)
+    for e in events:
+        assert isinstance(e["deviceTags"], list)
+
+
+def test_build_events_alert_data_is_dict():
+    rng = random.Random(0)
+    events = build_events(_TS, rng, DEFAULT_SECRET, 3)
+    for e in events:
+        assert isinstance(e["alertData"], dict)
 
 
 def test_build_events_version():

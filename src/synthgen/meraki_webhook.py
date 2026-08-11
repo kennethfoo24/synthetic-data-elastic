@@ -34,17 +34,52 @@ _ALERT_TYPES = [
     "Rogue AP detected",
 ]
 
+# Fixed device metadata — all values deterministic, not rng-dependent.
 _AP_SERIALS: dict[str, str] = {
     "meraki-ap-01": "Q2KD-XXX1-AAAA",
     "meraki-ap-02": "Q2KD-XXX2-BBBB",
 }
 
+_DEVICE_MACS: dict[str, str] = {
+    "meraki-ap-01": "aa:bb:cc:dd:ee:01",
+    "meraki-ap-02": "aa:bb:cc:dd:ee:02",
+}
+
+_DEVICE_MODELS: dict[str, str] = {
+    "meraki-ap-01": "MR46",
+    "meraki-ap-02": "MR46",
+}
+
+_ORG_NAME = "synthetic-org"
+_ORG_URL = "https://dashboard.meraki.com/o/1/manage/organization/overview"
+_NETWORK_URL = "https://n1.meraki.com/production-wifi/n/N_1/manage/usage/list"
+
+
+def _alert_type_id(alert_type: str) -> str:
+    """Derive a snake_case alertTypeId from the human-readable alertType."""
+    return alert_type.lower().replace(" ", "_")
+
+
+def _device_url(device_name: str) -> str:
+    serial_slug = _AP_SERIALS[device_name].replace("-", "")
+    return (
+        f"https://n1.meraki.com/production-wifi/n/{serial_slug}"
+        "/manage/nodes/new_list/000000000000"
+    )
+
 
 def build_events(t: datetime, rng: random.Random, secret: str, n: int) -> list[dict]:
     """Build ``n`` synthetic Meraki webhook event payloads.
 
-    This is a pure builder — no I/O.  Each call with the same ``rng`` state
-    and ``t`` is deterministic, making it straightforwardly unit-testable.
+    This is a pure builder — no I/O.  All values are deterministic from
+    ``(t, rng, secret)``; no wall-clock reads occur inside this function.
+
+    The payload schema matches what the cisco_meraki Elastic integration's
+    ingest pipeline expects for the ``cisco_meraki.events`` data stream.
+    Required fields verified against live pipeline output:
+        deviceMac, deviceModel, deviceUrl, deviceTags, networkUrl,
+        alertId, alertLevel, alertTypeId, organizationName, organizationUrl,
+        alertData (plus the original version/sharedSecret/sentAt/… set).
     """
     sent_at = t.strftime("%Y-%m-%dT%H:%M:%SZ")
     events: list[dict] = []
@@ -52,17 +87,35 @@ def build_events(t: datetime, rng: random.Random, secret: str, n: int) -> list[d
         device_name = rng.choice(list(_AP_SERIALS.keys()))
         serial = _AP_SERIALS[device_name]
         alert_type = rng.choice(_ALERT_TYPES)
+        alert_id = f"alert-{rng.randint(100_000, 999_999)}"
         events.append({
+            # Core identity
             "version": "0.1",
             "sharedSecret": secret,
+            # Timing (all derived from t — no wall-clock inside build_events)
             "sentAt": sent_at,
+            "occurredAt": sent_at,
+            # Organisation
             "organizationId": "1",
+            "organizationName": _ORG_NAME,
+            "organizationUrl": _ORG_URL,
+            # Network
             "networkId": "N_1",
             "networkName": "production-wifi",
+            "networkUrl": _NETWORK_URL,
+            # Device
             "deviceSerial": serial,
             "deviceName": device_name,
+            "deviceMac": _DEVICE_MACS[device_name],
+            "deviceModel": _DEVICE_MODELS[device_name],
+            "deviceUrl": _device_url(device_name),
+            "deviceTags": [],
+            # Alert
+            "alertId": alert_id,
             "alertType": alert_type,
-            "occurredAt": sent_at,
+            "alertTypeId": _alert_type_id(alert_type),
+            "alertLevel": "informational",
+            "alertData": {},
         })
     return events
 

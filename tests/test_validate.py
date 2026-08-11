@@ -1,3 +1,4 @@
+import httpx
 import pytest
 import respx
 
@@ -330,19 +331,20 @@ def test_meraki_events_check_fails_when_stream_missing():
 
 def _terms_agg_response(field_values: list[str]) -> dict:
     """Build a fake ES aggregation response with a single terms bucket set."""
+    buckets = [{"key": v, "doc_count": 10} for v in field_values]
     return {
         "aggregations": {
-            "log_types": {
-                "buckets": [{"key": v, "doc_count": 10} for v in field_values],
-            },
-            "event_types": {
-                "buckets": [{"key": v, "doc_count": 10} for v in field_values],
-            },
-            "mnemonics": {
-                "buckets": [{"key": v, "doc_count": 10} for v in field_values],
-            },
+            "log_types":   {"buckets": buckets},
+            "event_types": {"buckets": buckets},
+            "mnemonics":   {"buckets": buckets},
+            "alert_types": {"buckets": buckets},
         }
     }
+
+
+def _empty_agg_response() -> dict:
+    """Aggregation response with zero buckets (primary field not mapped)."""
+    return {"aggregations": {"alert_types": {"buckets": []}}}
 
 
 @respx.mock
@@ -370,29 +372,61 @@ def test_panw_log_types_fails_when_stream_missing():
 
 
 # ---------------------------------------------------------------------------
-# Meraki event variety check
+# Meraki event variety check (pipeline-error guard + alert-type variety)
 # ---------------------------------------------------------------------------
 
+_DS_COUNT = "https://es.example.com/logs-cisco_meraki.events-default/_count"
+_DS_SEARCH = "https://es.example.com/logs-cisco_meraki.events-default/_search"
+_ALERT_VALUES = ["APs went down", "APs came up", "Clients connected"]
+
+
 @respx.mock
-def test_meraki_event_variety_passes_with_three_types():
-    respx.post("https://es.example.com/logs-cisco_meraki.events-default/_search").respond(
-        json=_terms_agg_response(["APs went down", "APs came up", "Clients connected"]))
+def test_meraki_event_variety_passes_with_primary_field():
+    """Primary field (cisco_meraki.alert_type) returns data — happy path."""
+    respx.post(_DS_COUNT).respond(json={"count": 0})
+    respx.post(_DS_SEARCH).respond(json=_terms_agg_response(_ALERT_VALUES))
     result = check_meraki_event_variety(CTX)
     assert "3" in result
+    assert "cisco_meraki.alert_type" in result
 
 
 @respx.mock
-def test_meraki_event_variety_fails_with_one_type():
-    respx.post("https://es.example.com/logs-cisco_meraki.events-default/_search").respond(
-        json=_terms_agg_response(["APs went down"]))
-    with pytest.raises(CheckFailed, match="need"):
+def test_meraki_event_variety_falls_back_to_json_alertType():
+    """Primary field returns 0 buckets → falls back to json.alertType."""
+    respx.post(_DS_COUNT).respond(json={"count": 0})
+    # First _search call returns 0 buckets; second returns 3 buckets.
+    # respx supports a Sequence as side_effect — responses are consumed in order.
+    respx.post(_DS_SEARCH).mock(side_effect=[
+        httpx.Response(200, json=_empty_agg_response()),
+        httpx.Response(200, json=_terms_agg_response(_ALERT_VALUES)),
+    ])
+    result = check_meraki_event_variety(CTX)
+    assert "3" in result
+    assert "json.alertType" in result
+
+
+@respx.mock
+def test_meraki_event_variety_fails_on_pipeline_error_docs():
+    """Any pipeline_error doc → hard fail (payload schema fix required)."""
+    respx.post(_DS_COUNT).respond(json={"count": 5})
+    with pytest.raises(CheckFailed, match="pipeline_error"):
+        check_meraki_event_variety(CTX)
+
+
+@respx.mock
+def test_meraki_event_variety_fails_with_insufficient_variety():
+    """Fewer than 2 distinct alert types after both field attempts → fail."""
+    respx.post(_DS_COUNT).respond(json={"count": 0})
+    # Both _search calls return only 1 bucket
+    respx.post(_DS_SEARCH).respond(json=_terms_agg_response(["APs went down"]))
+    with pytest.raises(CheckFailed, match="need >= 2"):
         check_meraki_event_variety(CTX)
 
 
 @respx.mock
 def test_meraki_event_variety_fails_when_stream_missing():
-    respx.post("https://es.example.com/logs-cisco_meraki.events-default/_search").respond(
-        status_code=404, json={})
+    """404 on _count → data stream does not exist."""
+    respx.post(_DS_COUNT).respond(status_code=404, json={})
     with pytest.raises(CheckFailed, match="does not exist"):
         check_meraki_event_variety(CTX)
 
