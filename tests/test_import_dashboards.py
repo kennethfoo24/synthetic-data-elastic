@@ -92,6 +92,36 @@ def test_each_dashboard_has_six_panels():
             assert len(panels) == 6, f"{path.name}: expected 6 panels, got {len(panels)}"
 
 
+def test_network_overview_panel6_is_markdown():
+    """network-overview panel-6 must be a markdown scenario-annotations panel."""
+    path = DASHBOARDS_DIR / "network-overview.ndjson"
+    obj = json.loads(path.read_text())
+    panels = json.loads(obj["attributes"]["panelsJSON"])
+    panel6 = next((p for p in panels if p["panelIndex"] == "panel-6"), None)
+    assert panel6 is not None, "panel-6 not found in network-overview"
+    assert panel6["type"] == "markdown", (
+        f"panel-6 type must be 'markdown', got {panel6['type']!r}"
+    )
+    md = panel6["embeddableConfig"]["attributes"]["markdown"]
+    assert "Scenario" in md, "markdown content must reference scenario annotations"
+    assert "PANW" in md or "ASA" in md, "markdown must list at least one scenario source"
+
+
+def test_hpe_dell_panels_have_correct_vendor_filters():
+    """HPE panels must filter device.vendor: hpe; Dell panels must filter device.vendor: dell."""
+    for fname, vendor in [("hpe.ndjson", "hpe"), ("dell.ndjson", "dell")]:
+        path = DASHBOARDS_DIR / fname
+        obj = json.loads(path.read_text())
+        panels = json.loads(obj["attributes"]["panelsJSON"])
+        for panel in panels:
+            state = panel["embeddableConfig"]["attributes"]["state"]
+            query = state["query"]["query"]
+            assert f"device.vendor: {vendor}" in query, (
+                f"{fname} panel {panel['panelIndex']}: expected 'device.vendor: {vendor}' "
+                f"in query, got {query!r}"
+            )
+
+
 def test_dashboard_ids_constant_matches_ndjson_files():
     """The DASHBOARD_IDS constant in import_dashboards.py must match the actual file IDs."""
     ndjson_ids: set[str] = set()
@@ -171,3 +201,18 @@ def test_import_requests_carry_auth_and_xsrf_headers():
         headers = call.request.headers
         assert headers.get("authorization") == f"ApiKey {API_KEY}"
         assert headers.get("kbn-xsrf") == "true"
+
+
+@respx.mock
+def test_import_uses_multipart_form_data():
+    """Each import request must use multipart/form-data with a 'file' field."""
+    route = respx.post(f"{KB}/api/saved_objects/_import").respond(json=_SUCCESS_RESPONSE)
+    import_dashboards(KB, API_KEY)
+    for call in route.calls:
+        content_type = call.request.headers.get("content-type", "")
+        assert "multipart/form-data" in content_type, (
+            f"Expected multipart/form-data Content-Type, got: {content_type!r}"
+        )
+        # The raw body must contain the multipart 'file' field name
+        body = call.request.content
+        assert b'name="file"' in body, "multipart body must contain a 'file' field"

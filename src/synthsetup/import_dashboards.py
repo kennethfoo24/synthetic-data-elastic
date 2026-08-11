@@ -26,12 +26,7 @@ def import_dashboards(kibana_url: str, api_key: str) -> None:
         r = client.post(
             "/api/saved_objects/_import",
             params={"overwrite": "true"},
-            content=ndjson_content,
-            headers={
-                "Authorization": f"ApiKey {api_key}",
-                "kbn-xsrf": "true",
-                "Content-Type": "application/ndjson",
-            },
+            files={"file": (ndjson_path.name, ndjson_content.encode(), "application/ndjson")},
         )
         if r.status_code not in (200, 201):
             print(
