@@ -12,6 +12,9 @@
     "start": "node dist/server.js",
     "dev": "node --watch dist/server.js"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "network-topology-mcp": "dist/server.js"
   },

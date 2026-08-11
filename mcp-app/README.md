@@ -8,7 +8,7 @@ An [MCP](https://modelcontextprotocol.io/) server that exposes a single tool —
 
 ## Prerequisites
 
-- **Node.js 20+** (`node --version`)
+- **Node.js 22+** (`node --version`)
 - A running Elastic Serverless Observability project with data already flowing (`make validate` at the repo root should pass)
 - The three env vars described below
 
@@ -143,4 +143,4 @@ If the build step was skipped, the server returns a text-only summary. Run `npm 
 
 **TypeScript errors on build**
 
-Make sure you are on Node 20+. Run `npm install --legacy-peer-deps` to ensure all devDependencies are installed before building.
+Make sure you are on Node 22+. Run `npm install --legacy-peer-deps` to ensure all devDependencies are installed before building.
