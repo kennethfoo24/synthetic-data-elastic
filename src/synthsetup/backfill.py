@@ -120,7 +120,7 @@ def _build_bulk_body(docs: list[tuple[str, dict]]) -> bytes:
     """
     lines: list[str] = []
     for index, source in docs:
-        lines.append(json.dumps({"index": {"_index": index}}))
+        lines.append(json.dumps({"create": {"_index": index}}))
         lines.append(json.dumps(source))
     return ("\n".join(lines) + "\n").encode()
 

@@ -93,7 +93,7 @@ def test_build_bulk_body_ndjson_structure():
     lines = body.strip().split("\n")
     assert len(lines) == 2
     action = json.loads(lines[0])
-    assert action == {"index": {"_index": "my-index"}}
+    assert action == {"create": {"_index": "my-index"}}
     source = json.loads(lines[1])
     assert source["message"] == "hello"
 
@@ -103,8 +103,8 @@ def test_build_bulk_body_multiple_docs():
     body = _build_bulk_body(docs).decode()
     lines = body.strip().split("\n")
     assert len(lines) == 4  # 2 docs × 2 lines each
-    assert json.loads(lines[0])["index"]["_index"] == "idx-a"
-    assert json.loads(lines[2])["index"]["_index"] == "idx-b"
+    assert json.loads(lines[0])["create"]["_index"] == "idx-a"
+    assert json.loads(lines[2])["create"]["_index"] == "idx-b"
 
 
 # ---------------------------------------------------------------------------
