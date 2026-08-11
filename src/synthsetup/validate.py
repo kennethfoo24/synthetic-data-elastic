@@ -4,8 +4,22 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
+
+from synthgen.common.topology import load_topology as _load_topology
+
+_TOPOLOGY_PATH = Path(__file__).parents[2] / "topology" / "network.yaml"
+
+
+def _snmp_device_threshold() -> int:
+    """Count non-database, non-meraki devices in topology — the expected SNMP device count."""
+    topo = _load_topology(_TOPOLOGY_PATH)
+    return len([d for d in topo.devices if d.role != "database" and d.vendor != "meraki"])
+
+
+_SNMP_DEVICE_THRESHOLD = _snmp_device_threshold()
 
 
 @dataclass
@@ -126,12 +140,15 @@ def check_netflow_edges(ctx: Ctx) -> str:
 
 
 def check_snmp_devices(ctx: Ctx) -> str:
-    """Verify SNMP metrics flowing: docs in last 5m and ≥ 18 distinct device.name values.
+    """Verify SNMP metrics flowing: docs in last 5m and distinct device.name count from topology.
 
     Logstash polls snmpsim every 60 s via the bundled logstash-integration-snmp plugin
     and writes metrics to data stream metrics-snmp.device-default.  The terms agg on
     device.name confirms all topology devices are represented.  Under the built-in metrics
     ECS template, string fields map directly to keyword — there is no .keyword sub-field.
+
+    The threshold is derived from topology (non-database, non-meraki devices) at import time
+    so it stays in sync with the device roster automatically.
     """
     body = {
         "size": 0,
@@ -151,10 +168,10 @@ def check_snmp_devices(ctx: Ctx) -> str:
         raise CheckFailed("0 docs in metrics-snmp.device-default in last 5m")
     buckets = data.get("aggregations", {}).get("device_names", {}).get("buckets", [])
     distinct = len(buckets)
-    if distinct < 18:
+    if distinct < _SNMP_DEVICE_THRESHOLD:
         raise CheckFailed(
             f"only {distinct} distinct device.name values in metrics-snmp.device-default"
-            " (need ≥ 18)"
+            f" (need ≥ {_SNMP_DEVICE_THRESHOLD})"
         )
     return f"{total} SNMP metric docs in last 5m, {distinct} distinct devices"
 
@@ -192,6 +209,94 @@ def check_postgresql_metrics(ctx: Ctx) -> str:
     return f"{count} PostgreSQL database metric docs in last 5m"
 
 
+def check_panw_log_types(ctx: Ctx) -> str:
+    """Verify PANW log-type coverage: TRAFFIC, THREAT, and SYSTEM all present in last 15m.
+
+    The PANW integration emits all three log types when the generator is active.
+    A missing type indicates either a pipeline gap or a generator failure.
+    The panw.panos.type field is a keyword mapped by the panw integration.
+    """
+    body = {
+        "size": 0,
+        "query": {"range": {"@timestamp": {"gte": "now-15m"}}},
+        "aggs": {
+            "log_types": {
+                "terms": {"field": "panw.panos.type", "size": 20},
+            }
+        },
+    }
+    r = ctx.es().post("/logs-panw.panos-default/_search", json=body)
+    if r.status_code == 404:
+        raise CheckFailed("data stream logs-panw.panos-default does not exist")
+    buckets = r.json().get("aggregations", {}).get("log_types", {}).get("buckets", [])
+    found = {b["key"] for b in buckets}
+    required = {"TRAFFIC", "THREAT", "SYSTEM"}
+    missing = required - found
+    if missing:
+        raise CheckFailed(
+            f"PANW log types missing from logs-panw.panos-default in last 15m: {sorted(missing)}"
+        )
+    return f"PANW log types present: {sorted(found & required)}"
+
+
+def check_meraki_event_variety(ctx: Ctx) -> str:
+    """Verify Meraki webhook event variety: >= 2 distinct event.action values in last 15m.
+
+    The meraki_webhook generator posts events with rotating alertType values
+    (mapped to event.action by the cisco_meraki integration).  A single value
+    in 15 minutes indicates the generator is stuck or the field is not mapping.
+    """
+    body = {
+        "size": 0,
+        "query": {"range": {"@timestamp": {"gte": "now-15m"}}},
+        "aggs": {
+            "event_types": {
+                "terms": {"field": "event.action", "size": 20},
+            }
+        },
+    }
+    r = ctx.es().post("/logs-cisco_meraki.events-default/_search", json=body)
+    if r.status_code == 404:
+        raise CheckFailed("data stream logs-cisco_meraki.events-default does not exist")
+    buckets = r.json().get("aggregations", {}).get("event_types", {}).get("buckets", [])
+    distinct = len(buckets)
+    if distinct < 2:
+        raise CheckFailed(
+            f"only {distinct} distinct event.action values in logs-cisco_meraki.events-default"
+            " in last 15m (need ≥ 2)"
+        )
+    return f"{distinct} distinct Meraki event types in last 15m"
+
+
+def check_ios_mnemonic_variety(ctx: Ctx) -> str:
+    """Verify IOS mnemonic variety: >= 3 distinct event.code values in last 15m.
+
+    The IOS generator emits multiple syslog mnemonics (LOGIN_SUCCESS, CONFIG_I,
+    LOGGINGHOST_STARTSTOP, UPDOWN, etc.).  The cisco_ios integration maps the
+    mnemonic to event.code.  Fewer than 3 distinct values suggests a pipeline gap.
+    """
+    body = {
+        "size": 0,
+        "query": {"range": {"@timestamp": {"gte": "now-15m"}}},
+        "aggs": {
+            "mnemonics": {
+                "terms": {"field": "event.code", "size": 20},
+            }
+        },
+    }
+    r = ctx.es().post("/logs-cisco_ios.log-default/_search", json=body)
+    if r.status_code == 404:
+        raise CheckFailed("data stream logs-cisco_ios.log-default does not exist")
+    buckets = r.json().get("aggregations", {}).get("mnemonics", {}).get("buckets", [])
+    distinct = len(buckets)
+    if distinct < 3:
+        raise CheckFailed(
+            f"only {distinct} distinct event.code values in logs-cisco_ios.log-default"
+            " in last 15m (need ≥ 3)"
+        )
+    return f"{distinct} distinct IOS mnemonics (event.code) in last 15m"
+
+
 def check_meraki_syslog_recent(ctx: Ctx) -> str:
     """Verify Meraki syslog lines (flows/urls/events) flowing into logs-cisco_meraki.log-default."""
     r = ctx.es().post("/logs-cisco_meraki.log-default/_count", json={
@@ -221,6 +326,8 @@ CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("ASA logs flowing", check_asa_docs_recent),
     ("IOS logs flowing", check_ios_docs_recent),
     ("PANW logs flowing", check_panw_docs_recent),
+    ("PANW log types (TRAFFIC/THREAT/SYSTEM)", check_panw_log_types),
+    ("IOS mnemonic variety >= 3", check_ios_mnemonic_variety),
     ("NetFlow docs flowing", check_netflow_docs_recent),
     ("NetFlow edge pairs >= 10", check_netflow_edges),
     ("SNMP metrics flowing", check_snmp_devices),
@@ -228,6 +335,7 @@ CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("PostgreSQL metrics flowing", check_postgresql_metrics),
     ("Meraki syslog flowing", check_meraki_syslog_recent),
     ("Meraki webhook events flowing", check_meraki_events_recent),
+    ("Meraki event variety >= 2", check_meraki_event_variety),
 ]
 
 

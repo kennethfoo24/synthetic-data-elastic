@@ -41,7 +41,7 @@ def test_mix_includes_login_and_config():
 def test_all_ios_devices_emit():
     lines = [line for s in range(5) for line in generate_batch(TOPO, PEAK.replace(second=s))]
     found = [name for name in IOS_NAMES if any(name in line for line in lines)]
-    assert len(found) >= 4, f"Only {len(found)} of 6 IOS devices emitting"
+    assert len(found) == len(IOS_NAMES), f"Only {len(found)} of {len(IOS_NAMES)} IOS devices emitting"
 
 
 def test_link_updown_rare():

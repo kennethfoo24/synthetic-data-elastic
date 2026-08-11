@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
-import yaml
 
 # Make the project root importable so `snmp.generator.render` resolves.
 _PROJECT_ROOT = str(Path(__file__).parent.parent)
@@ -20,11 +19,12 @@ if _PROJECT_ROOT not in sys.path:
 
 from snmp.generator.render import (
     DATA_DIR,
+    K8S_LOGSTASH_DIR,
     TOPOLOGY_PATH,
     _snmp_devices,
+    render_k8s_logstash_yaml,
     render_logstash_conf,
     render_snmprec,
-    render_translate_yaml,
 )
 
 # ---------------------------------------------------------------------------
@@ -287,6 +287,7 @@ class TestSnmprecGrammarParse:
         """Committed .snmprec files must be byte-identical to a fresh render.
 
         Ensures nobody hand-edited snmp/data/ without re-running render.py.
+        Also checks that k8s/logstash/logstash.yaml matches its rendered form.
         """
         missing = []
         drift = []
@@ -302,41 +303,15 @@ class TestSnmprecGrammarParse:
             f"Committed .snmprec files differ from fresh render (re-run render.py): {drift}"
         )
 
-
-# ---------------------------------------------------------------------------
-# translate.yaml completeness
-# ---------------------------------------------------------------------------
-
-class TestTranslateYaml:
-    def test_all_devices_present(self):
-        """translate.yaml must contain every SNMP device."""
-        raw = render_translate_yaml(DEVICES)
-        parsed = yaml.safe_load(raw)
-        assert "devices" in parsed
-        translate_names = set(parsed["devices"].keys())
-        assert translate_names == DEVICE_NAMES, (
-            f"Missing: {DEVICE_NAMES - translate_names}, "
-            f"Extra: {translate_names - DEVICE_NAMES}"
+        # Drift check for k8s/logstash/logstash.yaml
+        k8s_yaml_path = K8S_LOGSTASH_DIR / "logstash.yaml"
+        expected_k8s = render_k8s_logstash_yaml(DEVICES)
+        assert k8s_yaml_path.exists(), (
+            "k8s/logstash/logstash.yaml is missing — re-run render.py"
         )
-
-    def test_each_entry_has_required_fields(self):
-        raw = render_translate_yaml(DEVICES)
-        parsed = yaml.safe_load(raw)
-        required = {"vendor", "role", "site", "ip"}
-        for name, info in parsed["devices"].items():
-            missing = required - set(info.keys())
-            assert not missing, f"translate entry {name!r} missing fields: {missing}"
-
-    def test_vendor_role_site_match_topology(self):
-        raw = render_translate_yaml(DEVICES)
-        parsed = yaml.safe_load(raw)["devices"]
-        device_by_name = {d.name: d for d in DEVICES}
-        for name, info in parsed.items():
-            d = device_by_name[name]
-            assert info["vendor"] == d.vendor
-            assert info["role"] == d.role
-            assert info["site"] == d.site
-            assert info["ip"] == d.ip
+        assert k8s_yaml_path.read_text() == expected_k8s, (
+            "k8s/logstash/logstash.yaml differs from fresh render — re-run render.py"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +340,13 @@ class TestLogstashConf:
         conf = render_logstash_conf(DEVICES)
         assert "${LS_API_KEY}" in conf
         assert "${LS_ES_URL}" in conf
+
+    def test_serverless_port_443(self):
+        """Serverless Elasticsearch requires port 443; guard against regression."""
+        conf = render_logstash_conf(DEVICES)
+        assert '"${LS_ES_URL}:443"' in conf, (
+            "Logstash output must connect to port 443 (serverless ES endpoint)"
+        )
 
     def test_per_device_input_blocks(self):
         """One snmp input block per device — 20 total (not two split blocks)."""

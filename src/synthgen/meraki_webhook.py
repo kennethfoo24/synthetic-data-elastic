@@ -18,6 +18,7 @@ Environment
 from __future__ import annotations
 
 import random
+import sys
 import time
 from datetime import UTC, datetime
 
@@ -78,6 +79,8 @@ def _post_with_retry(
         try:
             r = client.post(url, json=payload, timeout=10)
             if r.status_code < 500:
+                if r.status_code >= 300:
+                    print(f"webhook rejected: HTTP {r.status_code}", file=sys.stderr, flush=True)
                 return  # 2xx/3xx/4xx — not a transient server error
             print(
                 f"meraki-webhook: HTTP {r.status_code} on attempt {attempt + 1}",

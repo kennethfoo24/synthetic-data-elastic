@@ -466,14 +466,6 @@ def main() -> None:
         path.write_text(render_snmprec(d))
         print(f"  wrote {path.relative_to(PROJECT_ROOT)}")
 
-    translate_path = DATA_DIR / "translate.yaml"
-    translate_path.write_text(render_translate_yaml(devices))
-    print(f"  wrote {translate_path.relative_to(PROJECT_ROOT)}")
-
-    logstash_conf_path = DATA_DIR / "logstash.conf"
-    logstash_conf_path.write_text(render_logstash_conf(devices))
-    print(f"  wrote {logstash_conf_path.relative_to(PROJECT_ROOT)}")
-
     k8s_path = K8S_LOGSTASH_DIR / "logstash.yaml"
     k8s_path.write_text(render_k8s_logstash_yaml(devices))
     print(f"  wrote {k8s_path.relative_to(PROJECT_ROOT)}")

@@ -142,8 +142,9 @@ def main() -> None:
         return
 
     if args.mode == "meraki-webhook":
+        from synthgen.meraki_webhook import DEFAULT_SECRET
         from synthgen.meraki_webhook import run as mw_run
-        secret = os.environ.get("MERAKI_WEBHOOK_SECRET", "synthetic-meraki-secret")
+        secret = os.environ.get("MERAKI_WEBHOOK_SECRET", DEFAULT_SECRET)
         url = f"http://{args.target_host}:{args.target_port}/meraki/events"
         mw_run(url, secret=secret, seed=args.seed)
         return

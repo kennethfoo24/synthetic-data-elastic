@@ -2,16 +2,20 @@ import pytest
 import respx
 
 from synthsetup.validate import (
+    _SNMP_DEVICE_THRESHOLD,
     CheckFailed,
     Ctx,
     check_agents_online,
     check_asa_docs_recent,
     check_ios_docs_recent,
+    check_ios_mnemonic_variety,
+    check_meraki_event_variety,
     check_meraki_events_recent,
     check_meraki_syslog_recent,
     check_netflow_docs_recent,
     check_netflow_edges,
     check_panw_docs_recent,
+    check_panw_log_types,
     check_snmp_devices,
 )
 
@@ -225,13 +229,14 @@ def test_snmp_check_passes_with_20_devices():
 
 
 @respx.mock
-def test_snmp_check_passes_at_exactly_18_devices():
-    names = [f"device-{i:02d}" for i in range(18)]
+def test_snmp_check_passes_at_exactly_threshold_devices():
+    """Passes when device count equals the topology-derived threshold (currently 20)."""
+    names = [f"device-{i:02d}" for i in range(_SNMP_DEVICE_THRESHOLD)]
     respx.post(
         "https://es.example.com/metrics-snmp.device-default/_search"
-    ).respond(json=_snmp_search_response(54, names))
+    ).respond(json=_snmp_search_response(_SNMP_DEVICE_THRESHOLD * 3, names))
     result = check_snmp_devices(CTX)
-    assert "18" in result
+    assert str(_SNMP_DEVICE_THRESHOLD) in result
 
 
 @respx.mock
@@ -244,11 +249,12 @@ def test_snmp_check_fails_with_zero_docs():
 
 
 @respx.mock
-def test_snmp_check_fails_with_fewer_than_18_devices():
-    names = [f"device-{i:02d}" for i in range(15)]
+def test_snmp_check_fails_below_threshold():
+    """Fails when device count is below the topology-derived threshold."""
+    names = [f"device-{i:02d}" for i in range(_SNMP_DEVICE_THRESHOLD - 5)]
     respx.post(
         "https://es.example.com/metrics-snmp.device-default/_search"
-    ).respond(json=_snmp_search_response(45, names))
+    ).respond(json=_snmp_search_response(len(names) * 3, names))
     with pytest.raises(CheckFailed, match="need"):
         check_snmp_devices(CTX)
 
@@ -316,3 +322,104 @@ def test_meraki_events_check_fails_when_stream_missing():
         status_code=404, json={})
     with pytest.raises(CheckFailed, match="does not exist"):
         check_meraki_events_recent(CTX)
+
+
+# ---------------------------------------------------------------------------
+# PANW log-type coverage check
+# ---------------------------------------------------------------------------
+
+def _terms_agg_response(field_values: list[str]) -> dict:
+    """Build a fake ES aggregation response with a single terms bucket set."""
+    return {
+        "aggregations": {
+            "log_types": {
+                "buckets": [{"key": v, "doc_count": 10} for v in field_values],
+            },
+            "event_types": {
+                "buckets": [{"key": v, "doc_count": 10} for v in field_values],
+            },
+            "mnemonics": {
+                "buckets": [{"key": v, "doc_count": 10} for v in field_values],
+            },
+        }
+    }
+
+
+@respx.mock
+def test_panw_log_types_passes_with_all_three():
+    respx.post("https://es.example.com/logs-panw.panos-default/_search").respond(
+        json=_terms_agg_response(["TRAFFIC", "THREAT", "SYSTEM"]))
+    result = check_panw_log_types(CTX)
+    assert "TRAFFIC" in result or "SYSTEM" in result
+
+
+@respx.mock
+def test_panw_log_types_fails_when_type_missing():
+    respx.post("https://es.example.com/logs-panw.panos-default/_search").respond(
+        json=_terms_agg_response(["TRAFFIC", "THREAT"]))  # SYSTEM missing
+    with pytest.raises(CheckFailed, match="missing"):
+        check_panw_log_types(CTX)
+
+
+@respx.mock
+def test_panw_log_types_fails_when_stream_missing():
+    respx.post("https://es.example.com/logs-panw.panos-default/_search").respond(
+        status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_panw_log_types(CTX)
+
+
+# ---------------------------------------------------------------------------
+# Meraki event variety check
+# ---------------------------------------------------------------------------
+
+@respx.mock
+def test_meraki_event_variety_passes_with_three_types():
+    respx.post("https://es.example.com/logs-cisco_meraki.events-default/_search").respond(
+        json=_terms_agg_response(["APs went down", "APs came up", "Clients connected"]))
+    result = check_meraki_event_variety(CTX)
+    assert "3" in result
+
+
+@respx.mock
+def test_meraki_event_variety_fails_with_one_type():
+    respx.post("https://es.example.com/logs-cisco_meraki.events-default/_search").respond(
+        json=_terms_agg_response(["APs went down"]))
+    with pytest.raises(CheckFailed, match="need"):
+        check_meraki_event_variety(CTX)
+
+
+@respx.mock
+def test_meraki_event_variety_fails_when_stream_missing():
+    respx.post("https://es.example.com/logs-cisco_meraki.events-default/_search").respond(
+        status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_meraki_event_variety(CTX)
+
+
+# ---------------------------------------------------------------------------
+# IOS mnemonic variety check
+# ---------------------------------------------------------------------------
+
+@respx.mock
+def test_ios_mnemonic_variety_passes_with_four_codes():
+    respx.post("https://es.example.com/logs-cisco_ios.log-default/_search").respond(
+        json=_terms_agg_response(["LOGIN_SUCCESS", "CONFIG_I", "UPDOWN", "LOGGINGHOST_STARTSTOP"]))
+    result = check_ios_mnemonic_variety(CTX)
+    assert "4" in result
+
+
+@respx.mock
+def test_ios_mnemonic_variety_fails_with_two_codes():
+    respx.post("https://es.example.com/logs-cisco_ios.log-default/_search").respond(
+        json=_terms_agg_response(["LOGIN_SUCCESS", "CONFIG_I"]))
+    with pytest.raises(CheckFailed, match="need"):
+        check_ios_mnemonic_variety(CTX)
+
+
+@respx.mock
+def test_ios_mnemonic_variety_fails_when_stream_missing():
+    respx.post("https://es.example.com/logs-cisco_ios.log-default/_search").respond(
+        status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_ios_mnemonic_variety(CTX)

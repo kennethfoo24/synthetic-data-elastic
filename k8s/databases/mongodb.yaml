@@ -22,9 +22,8 @@
 #   mongodb-prod  —  primary  (priority 1)
 #   mongodb-dr    —  secondary (priority 0, will never be elected primary)
 #
-# The mongodb-init Job is idempotent: it checks rs.status() before calling
-# rs.initiate(), so re-applying this manifest is safe.  Use `make reset-databases`
-# if a primary pod restart has left the replica set in an inconsistent state.
+# The mongodb-init Job (k8s/databases/mongodb-init.yaml) is applied separately
+# after StatefulSet rollouts complete — see deploy.sh for sequencing details.
 ---
 # Headless Service for mongodb-prod — provides stable DNS for the StatefulSet
 # and is the target hosts entry in the Fleet mongodb integration.
@@ -145,57 +144,3 @@ spec:
         - name: data
           emptyDir:
             sizeLimit: 2Gi
----
-# mongodb-init: one-shot Job that forms the rs0 replica set.
-# Runs rs.initiate() only when the replica set is not yet configured.
-# ttlSecondsAfterFinished cleans up the completed pod after 10 minutes.
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: mongodb-init
-  namespace: synthetic-network
-spec:
-  ttlSecondsAfterFinished: 600
-  template:
-    spec:
-      restartPolicy: OnFailure
-      containers:
-        - name: mongosh
-          image: mongo:7
-          command:
-            - bash
-            - -c
-            - |
-              set -e
-              echo "==> Waiting for mongodb-prod..."
-              until mongosh --host mongodb-prod --quiet \
-                --eval "db.adminCommand('ping').ok" 2>/dev/null | grep -q "^1$"; do
-                sleep 3
-              done
-              echo "==> Waiting for mongodb-dr..."
-              until mongosh --host mongodb-dr --quiet \
-                --eval "db.adminCommand('ping').ok" 2>/dev/null | grep -q "^1$"; do
-                sleep 3
-              done
-              echo "==> Both members ready. Checking replica set status..."
-              RS_OK=$(mongosh --host mongodb-prod --quiet \
-                --eval "try { rs.status().ok } catch(e) { 0 }" 2>/dev/null | tail -1)
-              if [ "$RS_OK" = "1" ]; then
-                echo "==> Replica set rs0 already initialized — nothing to do."
-              else
-                echo "==> Initiating replica set rs0..."
-                mongosh --host mongodb-prod --eval '
-                  var cfg = {
-                    _id: "rs0",
-                    members: [
-                      { _id: 0, host: "mongodb-prod:27017", priority: 1 },
-                      { _id: 1, host: "mongodb-dr:27017",   priority: 0 }
-                    ]
-                  };
-                  printjson(rs.initiate(cfg));
-                '
-              fi
-              echo "==> Done."
-          resources:
-            requests: {cpu: 100m, memory: 256Mi}
-            limits: {memory: 512Mi}

@@ -34,6 +34,7 @@ Carried findings from Plan 1's final whole-branch review (2026-08-10). None bloc
 
 - **MongoDB log collection (mongodb.log):** The `mongodb/metrics` integration is in place, but `mongodb.log` log collection requires the `logfile` input with a pod-specific container log path. A non-DaemonSet Elastic Agent (single Deployment) cannot access log files on arbitrary nodes. Revisit with the K8s-integration follow-up (DaemonSet agent or log-shipping sidecar per DB pod).
 - **PostgreSQL log collection (postgresql.log):** Same limitation as MongoDB. The `logfile` input in the `postgresql` package needs a path to the container's PostgreSQL log file, which is not accessible from a Deployment-scoped agent. Resolution: DaemonSet agent or Filebeat sidecar — deferred to K8s-integration plan.
+- **Meraki cloud-API polling:** `cisco_meraki` has no API-polling input (verified 1.31.1) — webhook + syslog only; revisit if a Meraki API integration ships.
 
 ## Deferred minors from task reviews
 

@@ -8,6 +8,7 @@ resources:
   - namespace.yaml
   - rbac.yaml
   - databases/mongodb.yaml
+  - databases/mongodb-init.yaml
   - databases/postgres.yaml
   - jobs/fleet-setup.yaml
   - elastic-agent.yaml

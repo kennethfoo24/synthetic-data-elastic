@@ -33,21 +33,22 @@ kubectl -n synthetic-network create secret generic elastic-credentials \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "==> databases (MongoDB replica set + PostgreSQL streaming standby)"
-# Apply database manifests BEFORE the fleet-setup job so that the integration
+# Apply StatefulSets BEFORE the fleet-setup job so that the integration
 # targets (mongodb-prod, postgres-prod) are reachable when Fleet polls them.
 # Delete any stale mongodb-init Job first — a Job's pod template is immutable,
 # so a leftover Job from a failed prior run causes "field is immutable" on apply.
 kubectl -n synthetic-network delete job mongodb-init --ignore-not-found
 kubectl apply -f k8s/databases/mongodb.yaml
 kubectl apply -f k8s/databases/postgres.yaml
+# Wait for all four StatefulSet rollouts before initialising the replica set.
 kubectl -n synthetic-network rollout status statefulset/mongodb-prod --timeout=120s
 kubectl -n synthetic-network rollout status statefulset/mongodb-dr  --timeout=120s
 kubectl -n synthetic-network rollout status statefulset/postgres-prod --timeout=180s
 # postgres-dr waits for the initContainer (pg_basebackup) before the pod is Ready
 kubectl -n synthetic-network rollout status statefulset/postgres-dr --timeout=300s
-# Initialise the MongoDB replica set (idempotent; safe to re-apply)
+# Initialise the MongoDB replica set once both members are ready (idempotent).
 kubectl -n synthetic-network delete job mongodb-init --ignore-not-found
-kubectl apply -f k8s/databases/mongodb.yaml
+kubectl apply -f k8s/databases/mongodb-init.yaml
 kubectl -n synthetic-network wait --for=condition=complete job/mongodb-init --timeout=120s || {
   echo "ERROR: mongodb-init failed; logs:"; kubectl -n synthetic-network logs job/mongodb-init; exit 1;
 }
