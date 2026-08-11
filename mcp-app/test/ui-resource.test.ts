@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = resolve(__filename, '..');
 const REPO_ROOT  = resolve(__dirname, '..');
 const DIST_UI    = resolve(REPO_ROOT, 'dist-ui', 'index.html');
+const SRC_INDEX  = resolve(REPO_ROOT, 'ui', 'index.html');
 
 // ── Topology injection tests (pure function, no file I/O) ─────────────────────
 
@@ -70,6 +71,28 @@ describe('injectTopology', () => {
     expect(result).not.toContain('ELASTIC_API_KEY');
     expect(result).not.toContain('ApiKey ');
   });
+
+  // M3 regression: device names containing </script> must not escape the tag
+  it('escapes </script> in device names to prevent XSS breakout', () => {
+    const malicious = {
+      nodes: [{ id: 'evil', name: '</script><script>alert(1)</script>', site: 'production' }],
+      edges: [],
+      window: { from: 'now-1h', to: 'now' },
+      warnings: [],
+    };
+    const html = `<head>${TOPOLOGY_PLACEHOLDER}</head>`;
+    const result = injectTopology(html, malicious);
+    // The raw closing tag must not appear verbatim — it is escaped to \u003c/script>
+    expect(result).not.toContain('</script><script>');
+    expect(result).toContain('\\u003c/script');
+  });
+
+  // M5: the committed ui/index.html must contain the placeholder token so
+  // the primary injection path is live (not always the </head> fallback).
+  it('source ui/index.html contains __TOPOLOGY_PLACEHOLDER__ token', () => {
+    const html = readFileSync(SRC_INDEX, 'utf8');
+    expect(html).toContain('__TOPOLOGY_PLACEHOLDER__');
+  });
 });
 
 // ── Built bundle security tests ───────────────────────────────────────────────
@@ -88,34 +111,33 @@ describe('built bundle', () => {
     }
   });
 
-  it('bundle file exists after build (skip if not built)', () => {
+  function requireBundle(): void {
     if (!bundleExists) {
-      console.warn('SKIP: dist-ui/index.html not found — run `npm run build:ui` first');
-      return;
+      throw new Error(
+        'dist-ui/index.html not found — run `npm run build:ui` first. ' +
+        'CI must run build before test (typecheck → build → test).',
+      );
     }
+  }
+
+  it('bundle file exists after build', () => {
+    requireBundle();
     expect(bundleHtml.length).toBeGreaterThan(0);
   });
 
   // REQUIRED: assert the bundle contains no secret strings
   it('REQUIRED: bundle does not contain ELASTIC_API_KEY', () => {
-    if (!bundleExists) {
-      console.warn('SKIP: dist-ui/index.html not found — run `npm run build:ui` first');
-      // Not a hard fail when bundle is absent (CI runs build first)
-      return;
-    }
+    requireBundle();
     expect(bundleHtml).not.toContain('ELASTIC_API_KEY');
   });
 
   it('REQUIRED: bundle does not contain "ApiKey " (Elastic auth header prefix)', () => {
-    if (!bundleExists) {
-      console.warn('SKIP: dist-ui/index.html not found — run `npm run build:ui` first');
-      return;
-    }
+    requireBundle();
     expect(bundleHtml).not.toContain('ApiKey ');
   });
 
   it('bundle contains expected React root markup', () => {
-    if (!bundleExists) return;
+    requireBundle();
     expect(bundleHtml).toContain('id="root"');
   });
 });

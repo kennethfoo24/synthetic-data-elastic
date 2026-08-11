@@ -208,6 +208,17 @@ describe('runTopologyTool — site filter', () => {
     expect(summary).toMatch(/^1 node/);
     expect(summary).toMatch(/0 edges/);
   });
+
+  it('warns when site filter yields zero nodes (M5)', async () => {
+    // Only production node in the mock; filtering for dr yields nothing
+    vi.resetAllMocks();
+    setupHappyMocks([PROD_NODE], [], {});
+    const { topology } = await runTopologyTool(DEPS, { site: 'dr' });
+    expect(topology.nodes).toHaveLength(0);
+    expect(
+      topology.warnings.some((w) => /no nodes found for site filter/i.test(w)),
+    ).toBe(true);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -428,6 +439,12 @@ describe('runTopologyTool — ghost nodes for unmatched edge endpoints', () => {
     const drGhost = topology.nodes.find((n) => n.id === '10.20.7.11');
     expect(prodGhost?.site).toBe('production');
     expect(drGhost?.site).toBe('dr');
+
+    // H2: buildTopology must recompute crossSite from the final node list
+    // (after ghost synthesis). The production→DR ghost edge must be crossSite=true
+    // even though fetchEdges returned crossSite=false.
+    const crossEdge = topology.edges.find((e) => e.target === '10.20.7.11');
+    expect(crossEdge?.crossSite).toBe(true);
   });
 
   it('mongodb port 27017 takes precedence over ap subnet heuristic', async () => {
@@ -529,5 +546,93 @@ describe('runTopologyTool — auth error', () => {
     await expect(runTopologyTool(DEPS, {})).rejects.toThrow(
       'Elasticsearch auth failed (check ELASTIC_API_KEY)',
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('runTopologyTool — health end-to-end (real fetchHealth, mock ES) [H1]', () => {
+  // This suite does NOT use the vi.mock for fetchHealth — instead it wires the
+  // real implementation via vi.importActual so the H1 SNMP-node filter
+  // (n.name !== n.ip) is exercised end to end with a mocked ES client.
+
+  it('crit node appears in summary unhealthy list when SNMP shows downed interface', async () => {
+    vi.resetAllMocks();
+
+    // Obtain the real fetchHealth to bypass the file-level vi.mock
+    const { fetchHealth: realFetchHealth } = await vi.importActual<
+      typeof import('../src/queries/health.js')
+    >('../src/queries/health.js');
+
+    // Node with a real IP: name='router-crit' !== ip='10.10.1.50'
+    // → H1 filter selects it as SNMP-backed
+    const CRIT_NODE = makeNode({
+      id: 'router-crit',
+      name: 'router-crit',
+      ip: '10.10.1.50',
+      site: 'production',
+      role: 'router',
+      vendor: 'Cisco',
+    });
+
+    // SNMP health response: ifOperStatus.1 = 2 (port down) → health='crit'
+    const HEALTH_ES_RESP = {
+      aggregations: {
+        by_device: {
+          buckets: [
+            {
+              key: 'router-crit',
+              doc_count: 10,
+              latest: {
+                hits: {
+                  hits: [
+                    {
+                      _source: {
+                        snmp: {
+                          iso: {
+                            org: { dod: { internet: { mgmt: { 'mib-2': {
+                              interfaces: {
+                                ifTable: { ifEntry: {
+                                  ifOperStatus: { '1': 2 }, // 2 = down → crit
+                                }},
+                              },
+                            }}}}},
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    vi.mocked(fetchNodes).mockResolvedValue({ nodes: [CRIT_NODE], warnings: [] });
+    vi.mocked(fetchEdges).mockResolvedValue({ edges: [], warnings: [] });
+    // Delegate to the real fetchHealth so the H1 filter runs for real
+    vi.mocked(fetchHealth).mockImplementation(
+      (es, nodes, window) => realFetchHealth(es, nodes, window),
+    );
+    vi.mocked(fetchLogVolume).mockResolvedValue({
+      nodes: [{ ...CRIT_NODE, logCount: 0 }],
+      warnings: [],
+    });
+
+    // ES client that returns the SNMP health aggregation when queried
+    const mockEs = {
+      search: vi.fn().mockResolvedValue(HEALTH_ES_RESP),
+    } as unknown as Client;
+
+    const { summary } = await runTopologyTool(
+      { es: mockEs, config: MOCK_CONFIG },
+      {},
+    );
+
+    // The crit node must appear in the summary's unhealthy list
+    expect(summary).toMatch(/unhealthy:/i);
+    expect(summary).toContain('router-crit');
   });
 });

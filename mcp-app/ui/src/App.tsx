@@ -106,35 +106,98 @@ export function App({ topology }: AppProps) {
 
       {/* Main content */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Legend (left) */}
-        <div style={{ padding: 12, flexShrink: 0, overflowY: 'auto' }}>
-          <Legend scheme={scheme} />
-        </div>
-
-        {/* Graph (center) */}
-        <div ref={containerRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-          <NetworkGraph
-            nodes={topology.nodes}
-            edges={topology.edges}
-            scheme={scheme}
-            selectedNodeId={selectedNode?.id ?? null}
-            onNodeClick={handleNodeClick}
-            width={graphSize.width}
-            height={graphSize.height}
-          />
-        </div>
-
-        {/* Side panel (right) */}
-        {selectedNode && (
-          <div style={{ padding: 12, flexShrink: 0, overflowY: 'auto', maxHeight: '100%' }}>
-            <SidePanel
-              node={selectedNode}
-              edges={topology.edges}
-              allNodes={topology.nodes}
-              scheme={scheme}
-              onClose={handleClosePanel}
-            />
+        {topology.nodes.length === 0 ? (
+          /* Empty state — shown instead of a blank canvas */
+          <div
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 12,
+              color: muted,
+              padding: 32,
+              textAlign: 'center',
+            }}
+          >
+            <p style={{ margin: 0, fontSize: 16 }}>No nodes to display.</p>
+            {topology.warnings.length > 0 && (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                {topology.warnings.map((w, i) => (
+                  <li key={i} style={{ fontSize: 13 }}>
+                    {w}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
+        ) : (
+          <>
+            {/* Legend (left) */}
+            <div style={{ padding: 12, flexShrink: 0, overflowY: 'auto' }}>
+              <Legend scheme={scheme} />
+            </div>
+
+            {/* Graph (center) — contains the canvas + a visually-hidden keyboard nav */}
+            <div ref={containerRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+              <NetworkGraph
+                nodes={topology.nodes}
+                edges={topology.edges}
+                scheme={scheme}
+                selectedNodeId={selectedNode?.id ?? null}
+                onNodeClick={handleNodeClick}
+                width={graphSize.width}
+                height={graphSize.height}
+              />
+
+              {/* Visually-hidden keyboard-accessible node list.
+                  Screen-reader users and keyboard navigators can tab to each
+                  button to open the side panel — the canvas is not keyboard
+                  reachable via ForceGraph2D alone.                         */}
+              <nav
+                aria-label="Select a node"
+                style={{
+                  position: 'absolute',
+                  width: 1,
+                  height: 1,
+                  padding: 0,
+                  margin: -1,
+                  overflow: 'hidden',
+                  clip: 'rect(0,0,0,0)',
+                  whiteSpace: 'nowrap',
+                  borderWidth: 0,
+                }}
+              >
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                  {topology.nodes.map((node) => (
+                    <li key={node.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleNodeClick(node)}
+                        aria-pressed={selectedNode?.id === node.id}
+                      >
+                        {node.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            </div>
+
+            {/* Side panel (right) */}
+            {selectedNode && (
+              <div style={{ padding: 12, flexShrink: 0, overflowY: 'auto', maxHeight: '100%' }}>
+                <SidePanel
+                  node={selectedNode}
+                  edges={topology.edges}
+                  allNodes={topology.nodes}
+                  scheme={scheme}
+                  onClose={handleClosePanel}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

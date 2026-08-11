@@ -83,7 +83,7 @@ function deriveHealth(source: Record<string, unknown>): Node['health'] {
 
 /**
  * Query the latest SNMP metric document for each named device and derive
- * a health status.  Ghost nodes (ip !== '') stay 'unknown'.
+ * a health status.  Ghost nodes (id === name === ip) stay 'unknown'.
  * ES errors propagate; missing SNMP data returns nodes with health='unknown'.
  */
 export async function fetchHealth(
@@ -95,8 +95,9 @@ export async function fetchHealth(
 
   if (nodes.length === 0) return { nodes: [], warnings };
 
-  // Only SNMP-backed devices (ip === '') need a health query
-  const snmpNodes = nodes.filter((n) => n.ip === '');
+  // Only SNMP-backed devices (name !== ip) need a health query.
+  // Ghost nodes have id === name === ip; SNMP nodes have a device name distinct from their IP.
+  const snmpNodes = nodes.filter((n) => n.name && n.name !== n.ip);
   const deviceNames = snmpNodes.map((n) => n.name).filter(Boolean);
 
   if (deviceNames.length === 0) {

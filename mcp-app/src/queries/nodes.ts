@@ -1,5 +1,6 @@
 import type { Client } from '@elastic/elasticsearch';
 import type { Node, TimeWindow } from '../types.js';
+import { classifySite } from '../sites.js';
 
 /**
  * Read a dotted-path field from an ES _source document, handling both the
@@ -23,24 +24,19 @@ function pick(src: Record<string, unknown>, field: string): unknown {
   return src[field];
 }
 
-export interface FetchNodesOpts extends TimeWindow {
-  /**
-   * NetFlow IPs that had no matching SNMP device.
-   * Each becomes a ghost node with role='unknown' and site='external'.
-   */
-  extraIps?: string[];
-}
+export type FetchNodesOpts = TimeWindow;
 
 /**
  * Fetch SNMP device nodes from metrics-snmp.device-*.
- * Also synthesises ghost nodes for any extraIps not matched to known SNMP devices.
  * ES errors propagate; missing data returns [] + warnings.
+ * Ghost node synthesis is handled by the caller (tool.ts) after edge data
+ * is available for role inference.
  */
 export async function fetchNodes(
   es: Client,
   opts: FetchNodesOpts,
 ): Promise<{ nodes: Node[]; warnings: string[] }> {
-  const { from, to, extraIps = [] } = opts;
+  const { from, to } = opts;
   const warnings: string[] = [];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,7 +68,6 @@ export async function fetchNodes(
   const buckets: unknown[] = aggs?.by_device?.buckets ?? [];
 
   const nodes: Node[] = [];
-  const knownIps = new Set<string>();
 
   if (buckets.length === 0) {
     warnings.push('No SNMP device data found for the given time window');
@@ -86,13 +81,16 @@ export async function fetchNodes(
       const name = (pick(src, 'device.name') ?? bucket.key ?? '') as string;
       const vendor = (pick(src, 'device.vendor') ?? '') as string;
       const role = (pick(src, 'device.role') ?? 'unknown') as string;
-      const rawSite = pick(src, 'device.site') as string | undefined;
-      const site: Node['site'] =
-        rawSite === 'production' || rawSite === 'dr' ? rawSite : 'external';
 
       // device.ip is present in enriched docs; absent in older docs — tolerate both
       const mgmtIp = (pick(src, 'device.ip') ?? '') as string;
-      if (mgmtIp) knownIps.add(mgmtIp);
+
+      // Derive site from IP (single source of truth); fall back to device.site
+      // only when IP is absent (older docs without the enrichment field).
+      const rawSite = pick(src, 'device.site') as string | undefined;
+      const site: Node['site'] = mgmtIp
+        ? classifySite(mgmtIp)
+        : (rawSite === 'production' || rawSite === 'dr' ? rawSite : 'external');
 
       nodes.push({
         id: name,
@@ -105,26 +103,6 @@ export async function fetchNodes(
         logCount: 0,       // populated later by fetchLogVolume
       });
     }
-  }
-
-  // Ghost nodes: NetFlow IPs with no SNMP match
-  for (const ip of extraIps) {
-    if (!knownIps.has(ip)) {
-      nodes.push({
-        id: ip,
-        name: ip,
-        ip,
-        site: 'external',
-        role: 'unknown',
-        vendor: '',
-        health: 'unknown',
-        logCount: 0,
-      });
-    }
-  }
-
-  if (nodes.length === 0) {
-    warnings.push('No nodes found (neither SNMP devices nor extra IPs)');
   }
 
   return { nodes, warnings };

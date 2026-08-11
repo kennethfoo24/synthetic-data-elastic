@@ -89,41 +89,9 @@ describe('fetchEdges', () => {
     expect(call.query.range['@timestamp'].lte).toBe(WINDOW.to);
   });
 
-  it('crossSite=true when src and dst are in different non-external sites', async () => {
-    const es = makeEsClient(HAPPY_RESP);
-    const ipToSite: Record<string, string> = {
-      '10.1.0.1': 'production',
-      '10.2.0.1': 'dr',
-      '10.2.0.5': 'dr',
-    };
-    const { edges } = await fetchEdges(es, { ...WINDOW, ipToSite });
-    const edge = edges.find((e) => e.source === '10.1.0.1' && e.target === '10.2.0.1');
-    expect(edge?.crossSite).toBe(true);
-  });
-
-  it('crossSite=false when both IPs are in the same site', async () => {
-    const es = makeEsClient(HAPPY_RESP);
-    const ipToSite: Record<string, string> = {
-      '10.2.0.5': 'dr',
-      '10.1.0.1': 'dr',
-    };
-    const { edges } = await fetchEdges(es, { ...WINDOW, ipToSite });
-    const edge = edges.find((e) => e.source === '10.2.0.5' && e.target === '10.1.0.1');
-    expect(edge?.crossSite).toBe(false);
-  });
-
-  it('crossSite=false when one endpoint is external', async () => {
-    const es = makeEsClient(HAPPY_RESP);
-    const ipToSite: Record<string, string> = {
-      '10.1.0.1': 'production',
-      '192.0.2.1': 'external',
-    };
-    const { edges } = await fetchEdges(es, { ...WINDOW, ipToSite });
-    const edge = edges.find((e) => e.source === '10.1.0.1' && e.target === '192.0.2.1');
-    expect(edge?.crossSite).toBe(false);
-  });
-
-  it('crossSite=false when ipToSite is not provided', async () => {
+  it('crossSite is always false from fetchEdges (computed in buildTopology after ghost synthesis)', async () => {
+    // fetchEdges no longer computes crossSite — that responsibility moved to
+    // buildTopology so ghost nodes are available when the classification runs.
     const es = makeEsClient(HAPPY_RESP);
     const { edges } = await fetchEdges(es, WINDOW);
     expect(edges.every((e) => e.crossSite === false)).toBe(true);

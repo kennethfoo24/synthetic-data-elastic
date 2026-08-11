@@ -13,7 +13,7 @@ function makeNode(overrides: Partial<Node> = {}): Node {
   return {
     id: 'router-01',
     name: 'router-01',
-    ip: '',          // SNMP-backed: ip is empty
+    ip: '10.10.1.1',  // SNMP-backed: has a real IP, name !== ip
     site: 'production',
     role: 'router',
     vendor: 'Cisco',

@@ -52,7 +52,9 @@ export function readUiHtml(): string {
  * @param topology - Any JSON-serialisable topology object.
  */
 export function injectTopology(html: string, topology: unknown): string {
-  const json = JSON.stringify(topology);
+  // Replace '<' with its Unicode escape to prevent a device name containing
+  // '</script>' from breaking out of the script context (XSS mitigation).
+  const json = JSON.stringify(topology).replace(/</g, '\\u003c');
   // Inject as a script tag that sets the global before the React bundle runs.
   const injection = `<script>window.__TOPOLOGY__=${json};</script>`;
   // Replace the placeholder; if absent, prepend to </head> as fallback.

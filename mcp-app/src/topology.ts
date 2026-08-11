@@ -58,13 +58,15 @@ export function buildTopology(opts: BuildTopologyOpts): Topology {
     logCount: logVolume[n.name] ?? logVolume[n.id] ?? n.logCount,
   }));
 
-  // Warn if no SNMP data (all nodes are ghost/external with no vendor/role).
-  const hasSnmpNodes = enrichedNodes.some((n) => n.vendor !== '' || n.role !== 'unknown');
-  if (!hasSnmpNodes && enrichedNodes.length === 0) {
-    warnings.push('No SNMP device data found');
+  // Build id→site map from the FINAL enriched node list (which includes ghost
+  // nodes added by the caller) so crossSite can be computed after all endpoints
+  // are resolved.
+  const nodeIdToSite = new Map<string, string>();
+  for (const n of enrichedNodes) {
+    nodeIdToSite.set(n.id, n.site);
   }
 
-  // ── 3. Remap edges: IPs → node ids; drop self-edges ──────────────────────
+  // ── 3. Remap edges: IPs → node ids; compute crossSite; drop self-edges ────
   const unnamedEndpoints = new Set<string>();
   const remappedEdges: Edge[] = [];
 
@@ -79,10 +81,21 @@ export function buildTopology(opts: BuildTopologyOpts): Topology {
     // Drop self-edges
     if (srcId === dstId) continue;
 
+    // Compute crossSite from the final node list (ghost nodes included).
+    const srcSite = nodeIdToSite.get(srcId);
+    const dstSite = nodeIdToSite.get(dstId);
+    const crossSite =
+      !!srcSite &&
+      !!dstSite &&
+      srcSite !== dstSite &&
+      srcSite !== 'external' &&
+      dstSite !== 'external';
+
     remappedEdges.push({
       ...edge,
       source: srcId,
       target: dstId,
+      crossSite,
     });
   }
 

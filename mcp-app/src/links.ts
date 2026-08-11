@@ -90,7 +90,7 @@ export function discoverLink(kibanaUrl: string, opts: DiscoverLinkOpts): string 
     filters: [] as RisonValue[],
     index: dataset,
     interval: 'auto',
-    query: { language: 'kuery', query: `device.name:"${deviceName}"` },
+    query: { language: 'kuery', query: `device.name:"${deviceName.replace(/"/g, '\\"')}"` },
     sort: [] as RisonValue[],
   });
 

@@ -186,39 +186,10 @@ describe('fetchNodes', () => {
     expect(nodes[0].role).toBe('unknown');
   });
 
-  it('creates ghost nodes for extraIps', async () => {
-    const es = makeEsClient(HAPPY_RESP);
-    const extraIps = ['203.0.113.10', '198.51.100.5'];
-    const { nodes } = await fetchNodes(es, { ...WINDOW, extraIps });
-
-    // 2 SNMP + 2 ghost
-    expect(nodes).toHaveLength(4);
-
-    const ghost = nodes.find((n) => n.id === '203.0.113.10');
-    expect(ghost).toBeDefined();
-    expect(ghost?.name).toBe('203.0.113.10');
-    expect(ghost?.ip).toBe('203.0.113.10');
-    expect(ghost?.site).toBe('external');
-    expect(ghost?.role).toBe('unknown');
-    expect(ghost?.vendor).toBe('');
-  });
-
   it('returns empty nodes + warning when SNMP aggregation is empty', async () => {
     const es = makeEsClient({ aggregations: { by_device: { buckets: [] } } });
     const { nodes, warnings } = await fetchNodes(es, WINDOW);
     expect(nodes).toHaveLength(0);
-    expect(warnings.some((w) => /no snmp/i.test(w))).toBe(true);
-  });
-
-  it('returns ghost nodes even when SNMP is empty', async () => {
-    const es = makeEsClient({ aggregations: { by_device: { buckets: [] } } });
-    const { nodes, warnings } = await fetchNodes(es, {
-      ...WINDOW,
-      extraIps: ['10.99.99.99'],
-    });
-    expect(nodes).toHaveLength(1);
-    expect(nodes[0].role).toBe('unknown');
-    // SNMP-empty warning still present
     expect(warnings.some((w) => /no snmp/i.test(w))).toBe(true);
   });
 

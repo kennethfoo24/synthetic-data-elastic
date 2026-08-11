@@ -184,22 +184,14 @@ export async function runTopologyTool(
     throw new Error(classifyEsError(err));
   }
 
-  // ── 2. Build ip→site map (needed by fetchEdges for crossSite detection) ──
-  const ipToSite: Record<string, string> = {};
-  for (const node of baseNodes) {
-    if (node.ip) {
-      ipToSite[node.ip] = node.site;
-    }
-  }
-
-  // ── 3. Fetch edges, health and log volumes in parallel ───────────────────
+  // ── 2. Fetch edges, health and log volumes in parallel ───────────────────
   let edges: Edge[];
   let health: Record<string, Node['health']>;
   let logVolume: Record<string, number>;
 
   try {
     const [edgesResult, healthResult, logResult] = await Promise.all([
-      fetchEdges(es, { from: window.from, to: window.to, ipToSite }),
+      fetchEdges(es, { from: window.from, to: window.to }),
       fetchHealth(es, baseNodes, window),
       fetchLogVolume(es, baseNodes, window),
     ]);
@@ -280,6 +272,10 @@ export async function runTopologyTool(
 
   // ── 6. Focus device filter (1-hop neighbourhood) ─────────────────────────
   const finalWarnings = [...topology.warnings];
+
+  if (site !== 'all' && filteredNodes.length === 0) {
+    finalWarnings.push(`No nodes found for site filter '${site}'`);
+  }
 
   if (focusDevice !== undefined && focusDevice !== '') {
     const focusNode = filteredNodes.find(
