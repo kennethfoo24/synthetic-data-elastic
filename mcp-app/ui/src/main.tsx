@@ -24,9 +24,14 @@ if (!import.meta.env.DEV) {
 
 function DevMcpProvider({ children }: { children: React.ReactNode }) {
   const subscribeToToolResult = useCallback((listener: OnToolResult) => {
-    // Deliver the fixture on the next tick, mimicking a real tool result
+    // Deliver the fixture on the next tick using the same JSON-text-block
+    // shape the server now returns (shape A: { summary, topology }).
     const id = setTimeout(() => {
       listener({
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ summary: 'Dev fixture', topology: DEV_FIXTURE }),
+        }],
         structuredContent: DEV_FIXTURE as unknown as Record<string, unknown>,
       } as Parameters<OnToolResult>[0]);
     }, 80);

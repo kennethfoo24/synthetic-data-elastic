@@ -90,8 +90,13 @@ registerAppTool(
       };
     }
 
+    // Deliver the full payload as JSON in content[0].text so the MCP Apps
+    // UI bridge can parse it via parseToolResult (matching the Elastic reference
+    // implementation convention). structuredContent is kept for hosts that
+    // support it natively.
+    const payload = { summary: result.summary, topology: result.topology };
     return {
-      content: [{ type: 'text' as const, text: result.summary }],
+      content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
       structuredContent: result.topology as unknown as Record<string, unknown>,
     };
   },

@@ -4,8 +4,24 @@ import { SidePanel } from './components/SidePanel.js';
 import { Legend } from './components/Legend.js';
 import { WarningBanner } from './components/WarningBanner.js';
 import { useMcpApp } from './hooks/useMcpApp.js';
+import { extractTopology } from './parse-tool-result.js';
 import type { Topology, TopologyNode } from './types.js';
 import type { ColorScheme } from './colors.js';
+
+// Inject base styles (idempotent) so html/body/root fill the iframe correctly.
+// Must run once at module load — not inside a component — to avoid flash.
+if (typeof document !== 'undefined') {
+  const STYLE_ID = '__nt-base-styles__';
+  if (!document.getElementById(STYLE_ID)) {
+    const s = document.createElement('style');
+    s.id = STYLE_ID;
+    s.textContent = [
+      'html,body,#root{height:100%;margin:0;padding:0;overflow:hidden}',
+      '*{box-sizing:border-box}',
+    ].join('');
+    document.head.appendChild(s);
+  }
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -100,7 +116,7 @@ function StatusScreen({ title, detail, scheme, variant = 'default' }: StatusScre
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        height: '100vh',
+        height: '100%',
         background: p.bg,
         color: p.text,
         fontFamily: 'system-ui, -apple-system, sans-serif',
@@ -173,7 +189,9 @@ function ZoomButtons({ controlRef, p }: ZoomButtonsProps) {
 
 export function App() {
   const { connected, connectError, subscribeToToolResult } = useMcpApp();
-  const [topology, setTopology] = useState<Topology | null>(null);
+  const [topology, setTopology]           = useState<Topology | null>(null);
+  const [resultDiagnostic, setDiagnostic] = useState<string | null>(null);
+  const [waitingTooLong, setWaitingTooLong] = useState(false);
 
   const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null);
   const [scheme, setScheme] = useState<ColorScheme>(() =>
@@ -182,20 +200,33 @@ export function App() {
       : 'light',
   );
 
-  const containerRef   = useRef<HTMLDivElement>(null);
+  const containerRef    = useRef<HTMLDivElement>(null);
   const graphControlRef = useRef<ZoomControls | null>(null);
   const [graphSize, setGraphSize] = useState({ width: 800, height: 600 });
 
-  // Subscribe to tool results from the MCP bridge
+  // Subscribe to tool results from the MCP bridge.
+  // Resolution order: JSON text block → structuredContent (via extractTopology).
   useEffect(() => {
     const unsub = subscribeToToolResult((params) => {
-      if (params.structuredContent && typeof params.structuredContent === 'object') {
-        setTopology(params.structuredContent as unknown as Topology);
-        setSelectedNode(null); // reset selection on new result
+      const [topo, diag] = extractTopology(params as Parameters<typeof extractTopology>[0]);
+      if (topo) {
+        setTopology(topo);
+        setDiagnostic(null);
+        setWaitingTooLong(false);
+        setSelectedNode(null);
+      } else {
+        setDiagnostic(diag);
       }
     });
     return unsub;
   }, [subscribeToToolResult]);
+
+  // After 10 s connected with no topology, reveal the diagnostic hint.
+  useEffect(() => {
+    if (!connected || topology) return;
+    const id = setTimeout(() => setWaitingTooLong(true), 10_000);
+    return () => clearTimeout(id);
+  }, [connected, topology]);
 
   // Follow OS color scheme
   useEffect(() => {
@@ -250,11 +281,16 @@ export function App() {
   }
 
   if (!topology) {
+    const waitDetail = resultDiagnostic
+      ? resultDiagnostic
+      : waitingTooLong
+        ? 'No tool result received yet — run the network-topology tool in the conversation to see your network map.'
+        : 'Run the network-topology tool to see your network map here.';
     return (
       <StatusScreen
         scheme={scheme}
         title="Waiting for network topology…"
-        detail="Run the network-topology tool to see your network map here."
+        detail={waitDetail}
       />
     );
   }
@@ -272,7 +308,7 @@ export function App() {
       style={{
         display:    'flex',
         flexDirection: 'column',
-        height:     '100vh',
+        height:     '100%',
         background: p.bg,
         color:      p.text,
         fontFamily: 'system-ui, -apple-system, sans-serif',
