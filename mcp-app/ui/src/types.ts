@@ -1,6 +1,7 @@
 // Shared types for the topology UI.
 // These mirror the server-side types from src/types.ts + src/tool.ts.
-// The UI receives topology via window.__TOPOLOGY__ (injected by the MCP server).
+// The UI receives topology via the MCP Apps ontoolresult bridge
+// (structuredContent field on CallToolResult).
 
 export type Site = 'production' | 'dr' | 'external';
 export type Health = 'ok' | 'warn' | 'crit' | 'unknown';
@@ -43,11 +44,4 @@ export interface Topology {
   edges: TopologyEdge[];
   window: TimeWindow;
   warnings: string[];
-}
-
-// Augment window for the topology injection
-declare global {
-  interface Window {
-    __TOPOLOGY__?: Topology;
-  }
 }

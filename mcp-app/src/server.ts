@@ -10,18 +10,32 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  registerAppTool,
+  registerAppResource,
+  RESOURCE_MIME_TYPE,
+} from '@modelcontextprotocol/ext-apps/server';
 import { z } from 'zod';
 import { loadConfig } from './config.js';
 import { createEsClient } from './es.js';
 import { runTopologyTool } from './tool.js';
-import { buildUiResource } from './ui-resource.js';
+import { readUiHtml } from './ui-resource.js';
+
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const RESOURCE_URI = 'ui://network-topology/mcp-app.html';
+
+// ── Server ────────────────────────────────────────────────────────────────────
 
 const server = new McpServer({
   name: 'network-topology',
   version: '0.1.0',
 });
 
-server.registerTool(
+// ── Tool registration ─────────────────────────────────────────────────────────
+
+registerAppTool(
+  server,
   'network-topology',
   {
     title: 'Network Topology',
@@ -46,6 +60,9 @@ server.registerTool(
         .describe(
           'Device name or id. When set, returns only this device and its 1-hop neighbours.',
         ),
+    },
+    _meta: {
+      ui: { resourceUri: RESOURCE_URI },
     },
   },
   async (args) => {
@@ -73,41 +90,29 @@ server.registerTool(
       };
     }
 
-    // Build the content array: text summary + topology HTML resource.
-    // The SDK (1.30.0) supports embedded resources via { type: "resource" }.
-    // The HTML is returned as a text/html embedded resource so MCP clients
-    // that support UI rendering can display the interactive graph.
-    // Clients that don't understand embedded resources will fall back to the
-    // text summary above.
-    const contentItems: Array<
-      | { type: 'text'; text: string }
-      | { type: 'resource'; resource: { uri: string; mimeType: string; text: string } }
-    > = [
-      { type: 'text' as const, text: result.summary },
-    ];
-
-    // Attempt to load the UI bundle; skip gracefully if not yet built.
-    try {
-      const htmlWithTopology = buildUiResource(result.topology);
-      contentItems.push({
-        type: 'resource' as const,
-        resource: {
-          uri: 'network-topology://ui',
-          mimeType: 'text/html',
-          text: htmlWithTopology,
-        },
-      });
-    } catch {
-      // UI bundle not built — return text-only response; this is expected in
-      // development before `npm run build:ui` has been run.
-    }
-
     return {
-      content: contentItems,
+      content: [{ type: 'text' as const, text: result.summary }],
       structuredContent: result.topology as unknown as Record<string, unknown>,
     };
   },
 );
+
+// ── UI resource registration ───────────────────────────────────────────────────
+
+registerAppResource(
+  server,
+  RESOURCE_URI,
+  RESOURCE_URI,
+  { mimeType: RESOURCE_MIME_TYPE },
+  async () => {
+    const html = readUiHtml();
+    return {
+      contents: [{ uri: RESOURCE_URI, mimeType: RESOURCE_MIME_TYPE, text: html }],
+    };
+  },
+);
+
+// ── Transport ─────────────────────────────────────────────────────────────────
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

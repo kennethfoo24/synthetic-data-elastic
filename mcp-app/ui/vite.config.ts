@@ -10,6 +10,12 @@ export default defineConfig({
   root: _dirname,
   plugins: [react(), viteSingleFile()],
   build: {
+    // Build entry is mcp-app.html — the production single-file bundle
+    // served by registerAppResource.  ui/index.html + ui/src/main.tsx remain
+    // for `npm run dev:ui` (Vite dev server uses the root index.html by default).
+    rollupOptions: {
+      input: resolve(_dirname, 'mcp-app.html'),
+    },
     outDir: resolve(_dirname, '../dist-ui'),
     emptyOutDir: true,
     target: 'es2020',

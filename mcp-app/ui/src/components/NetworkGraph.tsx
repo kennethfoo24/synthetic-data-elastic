@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods, type NodeObject, type LinkObject } from 'react-force-graph-2d';
 import type { TopologyNode, TopologyEdge } from '../types.js';
 import {
@@ -36,6 +36,12 @@ interface GraphData {
   links: GraphLink[];
 }
 
+export interface ZoomControls {
+  zoomIn:    () => void;
+  zoomOut:   () => void;
+  zoomReset: () => void;
+}
+
 interface NetworkGraphProps {
   nodes: TopologyNode[];
   edges: TopologyEdge[];
@@ -44,6 +50,8 @@ interface NetworkGraphProps {
   onNodeClick: (node: TopologyNode) => void;
   width?: number;
   height?: number;
+  /** Optional ref forwarded to zoom helpers so App.tsx can control zoom */
+  controlRef?: React.RefObject<ZoomControls | null>;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -87,11 +95,29 @@ export function NetworkGraph({
   onNodeClick,
   width = 800,
   height = 600,
+  controlRef,
 }: NetworkGraphProps) {
   type GN = NodeObject<GraphNode>;
   type GL = LinkObject<GraphNode, GraphLink>;
   const graphRef = useRef<ForceGraphMethods<GN, GL>>(undefined);
   const [ready, setReady] = useState(false);
+
+  // Expose zoom helpers to the parent via controlRef
+  useImperativeHandle(controlRef, () => ({
+    zoomIn: () => {
+      const g = graphRef.current;
+      if (!g) return;
+      const cur = g.zoom();
+      if (cur !== undefined) g.zoom(cur * 1.25, 250);
+    },
+    zoomOut: () => {
+      const g = graphRef.current;
+      if (!g) return;
+      const cur = g.zoom();
+      if (cur !== undefined) g.zoom(Math.max(0.1, cur / 1.25), 250);
+    },
+    zoomReset: () => { graphRef.current?.zoomToFit(300, 40); },
+  }));
 
   const graphData = useMemo<GraphData>(() => ({
     nodes: nodes.map((n) => ({
