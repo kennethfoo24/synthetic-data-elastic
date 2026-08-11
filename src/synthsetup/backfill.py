@@ -166,8 +166,15 @@ def _bulk_in_chunks(
 
 
 def _delete_range(ctx: Ctx, index: str, start_t: datetime, end_t: datetime) -> None:
-    """Delete all docs in *index* with ``@timestamp`` in ``[start_t, end_t)``."""
-    r = ctx.es().post(
+    """Delete all docs in *index* with ``@timestamp`` in ``[start_t, end_t)``.
+
+    Uses async task mode (wait_for_completion=false) to avoid HTTP timeouts on
+    large ranges — polls the task API until the deletion completes.
+    """
+    import time
+
+    client = ctx.es()
+    r = client.post(
         f"/{index}/_delete_by_query",
         json={
             "query": {
@@ -179,7 +186,7 @@ def _delete_range(ctx: Ctx, index: str, start_t: datetime, end_t: datetime) -> N
                 }
             }
         },
-        params={"wait_for_completion": "true", "conflicts": "proceed"},
+        params={"wait_for_completion": "false", "conflicts": "proceed"},
     )
     if r.status_code == 404:
         return  # stream does not exist yet — nothing to delete
@@ -187,6 +194,21 @@ def _delete_range(ctx: Ctx, index: str, start_t: datetime, end_t: datetime) -> N
         raise RuntimeError(
             f"delete_by_query on {index} failed: HTTP {r.status_code}: {r.text[:200]}"
         )
+    task_id = r.json().get("task")
+    if not task_id:
+        return  # no task ID means it completed synchronously (small range)
+    # Poll until task completes (no timeout — delete must finish before we write)
+    while True:
+        tr = client.get(f"/_tasks/{task_id}")
+        if tr.status_code >= 400:
+            raise RuntimeError(f"task poll {task_id} failed: {tr.status_code}")
+        info = tr.json()
+        if info.get("completed"):
+            failures = info.get("response", {}).get("failures", [])
+            if failures:
+                raise RuntimeError(f"delete_by_query failures on {index}: {failures[:3]}")
+            return
+        time.sleep(2)
     deleted = r.json().get("deleted", 0)
     print(f"  Deleted {deleted:,} existing docs from {index}", flush=True)
 
