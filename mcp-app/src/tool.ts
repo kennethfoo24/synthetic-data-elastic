@@ -6,6 +6,7 @@ import { fetchEdges } from './queries/edges.js';
 import { fetchHealth } from './queries/health.js';
 import { fetchLogVolume } from './queries/logs.js';
 import { buildTopology } from './topology.js';
+import { classifySite } from './sites.js';
 import { discoverLink, snmpDiscoverLink, dashboardLink } from './links.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -68,6 +69,31 @@ function getIntegrationKey(node: Node): string {
   if (vendor.includes('mongodb')) return 'mongodb';
   if (vendor.includes('postgres')) return 'postgresql';
   return 'netflow';
+}
+
+// ── Ghost-node role inference ─────────────────────────────────────────────────
+
+/**
+ * Infer role and vendor for an IP that appears in NetFlow but has no SNMP
+ * device record.  All heuristics are data-derived from observed traffic; no
+ * topology config files are read.
+ *
+ * Priority order:
+ *   1. Port 27017 in any connecting edge's topPorts → MongoDB database server.
+ *   2. Port 5432  in any connecting edge's topPorts → PostgreSQL database server.
+ *   3. IP in 10.10.3.0/24 → Meraki access-point subnet (production AP range
+ *      confirmed in live NetFlow; these devices have no SNMP agent).
+ *   4. Fallback → role 'unknown', vendor ''.
+ */
+function inferGhostRole(
+  ip: string,
+  edges: Edge[],
+): { role: string; vendor: string } {
+  const topPorts = new Set(edges.flatMap((e) => e.topPorts));
+  if (topPorts.has(27017)) return { role: 'database', vendor: 'mongodb' };
+  if (topPorts.has(5432)) return { role: 'database', vendor: 'postgresql' };
+  if (/^10\.10\.3\./.test(ip)) return { role: 'ap', vendor: '' };
+  return { role: 'unknown', vendor: '' };
 }
 
 // ── ES error classification ───────────────────────────────────────────────────
@@ -196,9 +222,43 @@ export async function runTopologyTool(
     throw new Error(classifyEsError(err));
   }
 
+  // ── 3.5 Ghost nodes for unmatched edge endpoints ─────────────────────────
+  // Build the set of IPs already covered by SNMP devices.
+  const knownIps = new Set<string>(baseNodes.map((n) => n.ip).filter(Boolean));
+
+  // Group edges by each IP that has no SNMP match (for role inference).
+  const ghostIpEdges = new Map<string, Edge[]>();
+  for (const edge of edges) {
+    for (const ip of [edge.source, edge.target]) {
+      if (!knownIps.has(ip)) {
+        const arr = ghostIpEdges.get(ip) ?? [];
+        arr.push(edge);
+        ghostIpEdges.set(ip, arr);
+      }
+    }
+  }
+
+  const ghostNodes: Node[] = [];
+  for (const [ip, relatedEdges] of ghostIpEdges) {
+    const { role, vendor } = inferGhostRole(ip, relatedEdges);
+    ghostNodes.push({
+      id: ip,
+      name: ip,
+      ip,
+      site: classifySite(ip),
+      role,
+      vendor,
+      health: 'unknown', // no SNMP agent → health unknowable
+      logCount: 0,       // no managed hostname → no syslog match
+    });
+  }
+
+  // All nodes: SNMP-backed devices + ghost nodes for unmatched edge endpoints.
+  const allNodes: Node[] = [...baseNodes, ...ghostNodes];
+
   // ── 4. Assemble topology (enriches nodes, remaps edge IPs to node ids) ───
   const topology = buildTopology({
-    nodes: baseNodes,
+    nodes: allNodes,
     edges,
     health,
     logVolume,

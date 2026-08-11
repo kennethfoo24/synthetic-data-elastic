@@ -318,6 +318,152 @@ describe('runTopologyTool — empty data', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe('runTopologyTool — ghost nodes for unmatched edge endpoints', () => {
+  // Shared fixture: one SNMP-backed firewall at 10.10.1.1
+  const FW = makeNode({
+    id: 'fw-prod-01',
+    name: 'fw-prod-01',
+    ip: '10.10.1.1',
+    site: 'production',
+    role: 'firewall',
+    vendor: 'cisco',
+  });
+
+  function setupGhostMocks(edgeTarget: string, topPorts: number[]) {
+    vi.mocked(fetchNodes).mockResolvedValue({ nodes: [FW], warnings: [] });
+    vi.mocked(fetchEdges).mockResolvedValue({
+      edges: [
+        { source: '10.10.1.1', target: edgeTarget, bytes: 500_000, packets: 500, topPorts, crossSite: false },
+      ],
+      warnings: [],
+    });
+    vi.mocked(fetchHealth).mockResolvedValue({ nodes: [{ ...FW, health: 'ok' }], warnings: [] });
+    vi.mocked(fetchLogVolume).mockResolvedValue({ nodes: [{ ...FW, logCount: 0 }], warnings: [] });
+  }
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('creates a ghost node so no edge endpoint is dangling', async () => {
+    setupGhostMocks('10.10.7.11', [443]);
+    const { topology } = await runTopologyTool(DEPS, {});
+
+    const nodeIds = new Set(topology.nodes.map((n) => n.id));
+    for (const edge of topology.edges) {
+      expect(nodeIds.has(edge.source), `source ${edge.source} has no node`).toBe(true);
+      expect(nodeIds.has(edge.target), `target ${edge.target} has no node`).toBe(true);
+    }
+  });
+
+  it('every edge endpoint has a matching node (general invariant)', async () => {
+    // Mix of matched and unmatched endpoints
+    vi.mocked(fetchNodes).mockResolvedValue({ nodes: [FW], warnings: [] });
+    vi.mocked(fetchEdges).mockResolvedValue({
+      edges: [
+        { source: '10.10.1.1', target: '10.10.7.11', bytes: 1000, packets: 10, topPorts: [27017], crossSite: false },
+        { source: '10.10.1.1', target: '10.10.7.21', bytes: 2000, packets: 20, topPorts: [5432],  crossSite: false },
+        { source: '10.10.1.1', target: '10.10.3.50', bytes: 3000, packets: 30, topPorts: [443],   crossSite: false },
+      ],
+      warnings: [],
+    });
+    vi.mocked(fetchHealth).mockResolvedValue({ nodes: [{ ...FW, health: 'ok' }], warnings: [] });
+    vi.mocked(fetchLogVolume).mockResolvedValue({ nodes: [{ ...FW, logCount: 0 }], warnings: [] });
+
+    const { topology } = await runTopologyTool(DEPS, {});
+    const nodeIds = new Set(topology.nodes.map((n) => n.id));
+
+    for (const edge of topology.edges) {
+      expect(nodeIds.has(edge.source), `source ${edge.source} missing`).toBe(true);
+      expect(nodeIds.has(edge.target), `target ${edge.target} missing`).toBe(true);
+    }
+    // 1 SNMP node + 3 ghost nodes
+    expect(topology.nodes.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('ghost node gets role=database, vendor=mongodb when edge has port 27017', async () => {
+    setupGhostMocks('10.10.7.11', [27017]);
+    const { topology } = await runTopologyTool(DEPS, {});
+
+    const ghost = topology.nodes.find((n) => n.id === '10.10.7.11');
+    expect(ghost).toBeDefined();
+    expect(ghost?.role).toBe('database');
+    expect(ghost?.vendor).toBe('mongodb');
+  });
+
+  it('ghost node gets role=database, vendor=postgresql when edge has port 5432', async () => {
+    setupGhostMocks('10.10.7.21', [5432]);
+    const { topology } = await runTopologyTool(DEPS, {});
+
+    const ghost = topology.nodes.find((n) => n.id === '10.10.7.21');
+    expect(ghost).toBeDefined();
+    expect(ghost?.role).toBe('database');
+    expect(ghost?.vendor).toBe('postgresql');
+  });
+
+  it('ghost node gets role=ap for 10.10.3.x (Meraki AP subnet)', async () => {
+    setupGhostMocks('10.10.3.50', [443]);
+    const { topology } = await runTopologyTool(DEPS, {});
+
+    const ghost = topology.nodes.find((n) => n.id === '10.10.3.50');
+    expect(ghost).toBeDefined();
+    expect(ghost?.role).toBe('ap');
+  });
+
+  it('classifies ghost-node site from IP (10.10.x → production, 10.20.x → dr)', async () => {
+    vi.mocked(fetchNodes).mockResolvedValue({ nodes: [FW], warnings: [] });
+    vi.mocked(fetchEdges).mockResolvedValue({
+      edges: [
+        { source: '10.10.1.1', target: '10.10.7.11', bytes: 1000, packets: 10, topPorts: [27017], crossSite: false },
+        { source: '10.10.1.1', target: '10.20.7.11', bytes: 1000, packets: 10, topPorts: [27017], crossSite: false },
+      ],
+      warnings: [],
+    });
+    vi.mocked(fetchHealth).mockResolvedValue({ nodes: [{ ...FW, health: 'ok' }], warnings: [] });
+    vi.mocked(fetchLogVolume).mockResolvedValue({ nodes: [{ ...FW, logCount: 0 }], warnings: [] });
+
+    const { topology } = await runTopologyTool(DEPS, {});
+
+    const prodGhost = topology.nodes.find((n) => n.id === '10.10.7.11');
+    const drGhost = topology.nodes.find((n) => n.id === '10.20.7.11');
+    expect(prodGhost?.site).toBe('production');
+    expect(drGhost?.site).toBe('dr');
+  });
+
+  it('mongodb port 27017 takes precedence over ap subnet heuristic', async () => {
+    // If a 10.10.3.x host talks on port 27017, it's a DB not an AP
+    setupGhostMocks('10.10.3.50', [27017]);
+    const { topology } = await runTopologyTool(DEPS, {});
+    const ghost = topology.nodes.find((n) => n.id === '10.10.3.50');
+    expect(ghost?.role).toBe('database');
+    expect(ghost?.vendor).toBe('mongodb');
+  });
+
+  it('no ghost nodes when all edge endpoints are already SNMP-backed', async () => {
+    // All edge IPs match SNMP nodes by IP
+    const DR_FW = makeNode({ id: 'fw-dr-01', name: 'fw-dr-01', ip: '10.20.1.1', site: 'dr' });
+    vi.mocked(fetchNodes).mockResolvedValue({ nodes: [FW, DR_FW], warnings: [] });
+    vi.mocked(fetchEdges).mockResolvedValue({
+      edges: [{ source: '10.10.1.1', target: '10.20.1.1', bytes: 1000, packets: 10, topPorts: [443], crossSite: true }],
+      warnings: [],
+    });
+    vi.mocked(fetchHealth).mockResolvedValue({
+      nodes: [{ ...FW, health: 'ok' }, { ...DR_FW, health: 'ok' }],
+      warnings: [],
+    });
+    vi.mocked(fetchLogVolume).mockResolvedValue({
+      nodes: [{ ...FW, logCount: 0 }, { ...DR_FW, logCount: 0 }],
+      warnings: [],
+    });
+
+    const { topology } = await runTopologyTool(DEPS, {});
+    // Exactly 2 nodes — no ghosts added
+    expect(topology.nodes).toHaveLength(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe('runTopologyTool — auth error', () => {
   function makeAuthError(statusCode: number) {
     const err = new Error('Security exception: missing authentication');
