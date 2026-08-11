@@ -241,6 +241,44 @@ def render_snmprec(device: Device) -> str:
         "|initial=45,min=5,max=85,deviation=10,function=sin"
     )
 
+    # ── HPE enterprise OIDs (scenario gauges, all HPE devices) ──────────────
+    # OIDs under 1.3.6.1.4.1.11.2.36.1 (HPE Management OID) in ascending order.
+    # Baseline values are "normal operation"; the scenario rewriter overrides
+    # these with static |66|VALUE lines during active scenario windows.
+    if device.vendor == "hpe":
+        # fan_condition: 2=OK (cpqHeFltTolFanCondition-equivalent)
+        lines.append("1.3.6.1.4.1.11.2.36.1.1.2.1.0|66|2")
+        # temperature_c: sinusoidal 20–35 °C (baseline ambient)
+        lines.append(
+            "1.3.6.1.4.1.11.2.36.1.1.3.1.5|66:numeric"
+            "|initial=25,min=20,max=35,deviation=2,function=sin"
+        )
+        # port_util_pct: sinusoidal 5–75 % (baseline utilisation)
+        lines.append(
+            "1.3.6.1.4.1.11.2.36.1.1.5.1.0|66:numeric"
+            "|initial=20,min=5,max=75,deviation=5,function=sin"
+        )
+        # raid_status: 2=OK (cpqDaLogDrvStatus-equivalent)
+        lines.append("1.3.6.1.4.1.11.2.36.1.1.12.1.0|66|2")
+
+    # ── Dell enterprise OIDs (scenario gauges, all Dell devices) ─────────────
+    # OIDs under 1.3.6.1.4.1.674.10892.5.4 (Dell iDRAC/OpenManage) in ascending order.
+    # Baseline values are "normal operation"; the scenario rewriter overrides
+    # these with static |66|VALUE lines during active scenario windows.
+    if device.vendor == "dell":
+        # psu_status: 3=presentAndOK (PowerSupplyCurrentStatus-equivalent)
+        lines.append("1.3.6.1.4.1.674.10892.5.4.600.12.1.5.1.1|66|3")
+        # psu_power_w: sinusoidal 300–420 W (baseline power draw)
+        lines.append(
+            "1.3.6.1.4.1.674.10892.5.4.600.30.1.6.1.1|66:numeric"
+            "|initial=350,min=300,max=420,deviation=20,function=sin"
+        )
+        # mem_used_pct: sinusoidal 30–75 % (baseline memory pressure)
+        lines.append(
+            "1.3.6.1.4.1.674.10892.5.4.1100.50.1.6.1.1|66:numeric"
+            "|initial=50,min=30,max=75,deviation=5,function=sin"
+        )
+
     # ── Storage capacity (private enterprise OID, only for storage role) ──────
     if device.role == "storage":
         # Capacity utilisation (%): sinusoidal oscillation 10–95%

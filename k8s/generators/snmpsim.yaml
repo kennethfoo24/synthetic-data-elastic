@@ -11,6 +11,16 @@ spec:
     metadata:
       labels: {app: snmpsim}
     spec:
+      # initContainer copies baked-in .snmprec files to a shared emptyDir so the
+      # scenario-rewriter sidecar can overwrite them at runtime.  snmpsim hot-reloads
+      # every modified .snmprec file on the next incoming SNMP request — no restart.
+      initContainers:
+        - name: copy-snmprec
+          image: kennethfoo24/synthetic-netgen:latest
+          command: ["/bin/sh", "-c", "cp -r /app/snmp/data/. /snmpdata/"]
+          volumeMounts:
+            - name: snmpdata
+              mountPath: /snmpdata
       containers:
         - name: snmpsim
           # Same synthetic-netgen image; snmpsim is installed via the [snmp]
@@ -18,21 +28,56 @@ spec:
           # run the snmpsim command responder instead of synthgen.
           #
           # Community-string → file mapping: snmpsim v1.x flat-file mode maps
-          # community "device-name" to /app/snmp/data/device-name.snmprec.
-          # Each device's .snmprec is rendered by snmp/generator/render.py.
+          # community "device-name" to /snmpdata/device-name.snmprec.
+          # Each device's .snmprec baseline is rendered by snmp/generator/render.py;
+          # scenario windows are applied at runtime by the scenario-rewriter sidecar.
           image: kennethfoo24/synthetic-netgen:latest
           command: ["snmpsim-command-responder"]
           args:
-            - --data-dir=/app/snmp/data
+            - --data-dir=/snmpdata
             - --agent-udpv4-endpoint=0.0.0.0:161
             - --process-user=nobody
             - --process-group=nogroup
           ports:
             - containerPort: 161
               protocol: UDP
+          volumeMounts:
+            - name: snmpdata
+              mountPath: /snmpdata
           resources:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {memory: 256Mi}
+
+        - name: scenario-rewriter
+          # Scenario rewriter sidecar — hot-patches HPE/Dell .snmprec files as
+          # scenario windows open and close (every 60 s).  snmpsim picks up the
+          # changes on the next SNMP request without a restart.
+          #
+          # SCENARIO_SEED must be set to the same integer used by all other
+          # generator pods so the scenario schedules are in sync.
+          image: kennethfoo24/synthetic-netgen:latest
+          command: ["python", "/app/snmp/generator/rewriter.py"]
+          args:
+            - --seed=$(SCENARIO_SEED)
+            - --data-dir=/snmpdata
+            - --interval=60
+          env:
+            - name: SCENARIO_SEED
+              valueFrom:
+                secretKeyRef:
+                  name: elastic-credentials
+                  key: SCENARIO_SEED
+                  optional: true
+          volumeMounts:
+            - name: snmpdata
+              mountPath: /snmpdata
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 128Mi}
+
+      volumes:
+        - name: snmpdata
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
