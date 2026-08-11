@@ -46,3 +46,29 @@ def asa_113005(ts, hostname, user, user_ip, server: str = "10.20.7.5") -> str:
         f"server = {server} : user = {user} : user IP = {user_ip}"
     )
     return _line(ts, hostname, 6, "113005", body)
+
+
+def asa_104001(ts: datetime, hostname: str, unit: str = "Primary") -> str:
+    """ASA failover: this unit is switching to ACTIVE (severity 1 = alert).
+
+    Example::
+
+        %ASA-1-104001: (Secondary) Switching to ACTIVE - Loss of communication
+        with mate on interface failover-link
+    """
+    body = (
+        f"({unit}) Switching to ACTIVE - Loss of communication "
+        "with mate on interface failover-link"
+    )
+    return _line(ts, hostname, 1, "104001", body)
+
+
+def asa_104002(ts: datetime, hostname: str, unit: str = "Primary") -> str:
+    """ASA failover: this unit is switching to STANDBY (severity 1 = alert).
+
+    Example::
+
+        %ASA-1-104002: (Primary) Switching to STANDBY - Other side is ACTIVE
+    """
+    body = f"({unit}) Switching to STANDBY - Other side is ACTIVE"
+    return _line(ts, hostname, 1, "104002", body)

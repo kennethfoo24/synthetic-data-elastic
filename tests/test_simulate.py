@@ -53,16 +53,21 @@ def _ok_response(n: int) -> dict:
 
 # Pinned sample counts per source — update both here AND in simulate.py when
 # a new message type is added to a source's sample builder.
-#   cisco_asa    : 4 — asa_302013, asa_302014, asa_106023, asa_113005
-#   cisco_ios    : 5 — ios_login_success, ios_config_i, ios_link_updown,
-#                      ios_lineproto_updown, ios_logginghost
+#   cisco_asa    : 6 — asa_302013, asa_302014, asa_106023, asa_113005,
+#                      asa_104001 (failover active), asa_104002 (failover standby)
+#   cisco_ios    : 8 — ios_login_success, ios_config_i, ios_link_updown,
+#                      ios_lineproto_updown, ios_logginghost,
+#                      ios_stp_topology_change, ios_stp_portstatus, ios_cpu_threshold
 #   panw         : 3 — panos_traffic, panos_threat, panos_system
-#   cisco_meraki : 3 — meraki_flow, meraki_url, meraki_event_association
+#                      (scenario effects reuse existing types — no new wire format)
+#   cisco_meraki : 7 — meraki_flow, meraki_url, meraki_event_association,
+#                      meraki_event_device_down, meraki_event_device_up,
+#                      meraki_event_air_marshal, meraki_event_uplink_change
 _EXPECTED_DOC_COUNTS: dict[str, int] = {
-    "cisco_asa": 4,
-    "cisco_ios": 5,
+    "cisco_asa": 6,
+    "cisco_ios": 8,
     "panw": 3,
-    "cisco_meraki": 3,
+    "cisco_meraki": 7,
 }
 
 

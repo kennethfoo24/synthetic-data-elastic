@@ -16,6 +16,7 @@ from datetime import datetime
 
 from synthgen import GLOBAL_SEED
 from synthgen.common.patterns import rate_multiplier
+from synthgen.common.scenarios import active_scenarios
 from synthgen.common.topology import Flow, Topology
 from synthgen.syslog_gen.formats import panw
 
@@ -44,6 +45,9 @@ _SYSTEM_EVENTS = [
 
 # Emit one SYSTEM record every 120 seconds (deterministic modulo check).
 _SYSTEM_INTERVAL_S = 120
+
+# Scenario port-scan attacker net (RFC 5737 TEST-NET-2 — distinct from EXTERNAL_NET).
+_SCAN_NET = "198.51.100."
 
 
 def _egress_flows(topo: Topology) -> list[Flow]:
@@ -172,5 +176,80 @@ def generate_batch(topo: Topology, t: datetime, seed: int = GLOBAL_SEED) -> list
             session_id=rng.randint(10_000, 999_999),
             seq_no=rng.randint(100_000, 9_999_999),
         ))
+
+    # ── Scenario overlay (separate RNG; does not touch baseline rng) ─────────
+    sc = active_scenarios("panw", t, seed)
+    if sc:
+        sc_rng = random.Random(f"{seed}|panw|sc|{int(t.timestamp())}")
+        servers = [d for d in topo.devices if d.site == "production" and d.role == "server"]
+
+        for spec, ph in sc:
+            elapsed = ph * spec.duration_s
+
+            if spec.id == "panw.port_scan":
+                # Dense burst of THREAT/deny from one fixed external IP to sequential ports.
+                scan_rng = random.Random(f"{seed}|{spec.id}|attacker")
+                attacker_ip = _SCAN_NET + str(scan_rng.randint(100, 200))
+                dst = servers[0] if servers else fw
+                n_scan = max(5, int(20 * (1.0 - ph * 0.5)))
+                port_offset = int(elapsed) * 20
+                for i in range(n_scan):
+                    dst_port = 1 + (port_offset + i) % 65534
+                    lines.append(panw.panos_threat(
+                        ts=t, hostname=fw.name, serial=_SERIAL,
+                        src_ip=attacker_ip, dst_ip=dst.ip,
+                        src_port=sc_rng.randint(1024, 65000),
+                        dst_port=dst_port,
+                        proto="tcp",
+                        subtype="vulnerability",
+                        threat_id="36882",
+                        severity="high",
+                        src_zone="outside", dst_zone="inside",
+                        app="web-browsing",
+                        session_id=sc_rng.randint(10_000, 999_999),
+                        seq_no=sc_rng.randint(100_000, 9_999_999),
+                    ))
+
+            elif spec.id == "panw.malware_detect":
+                # Spyware/C2 THREAT records: infected host reaches out to attacker IP.
+                malware_rng = random.Random(f"{seed}|{spec.id}|c2")
+                c2_ip = _SCAN_NET + str(malware_rng.randint(201, 250))
+                victim = servers[int(len(servers) * ph) % len(servers)] if servers else fw
+                n_detect = max(1, int(5 * min(ph, 1.0 - ph) * 2))  # tent function
+                for _ in range(n_detect):
+                    lines.append(panw.panos_threat(
+                        ts=t, hostname=fw.name, serial=_SERIAL,
+                        src_ip=victim.ip, dst_ip=c2_ip,
+                        src_port=sc_rng.randint(1024, 65000),
+                        dst_port=sc_rng.choice([443, 80, 8080]),
+                        proto="tcp",
+                        subtype="spyware",
+                        threat_id=sc_rng.choice(["57432", "92432"]),
+                        severity="critical",
+                        src_zone="inside", dst_zone="outside",
+                        app="ssl",
+                        session_id=sc_rng.randint(10_000, 999_999),
+                        seq_no=sc_rng.randint(100_000, 9_999_999),
+                    ))
+
+            elif spec.id == "panw.vpn_flap":
+                # SYSTEM vpn tunnel-down during window; tunnel-up near end.
+                remaining = spec.duration_s - elapsed
+                if remaining > spec.duration_s * 0.1:
+                    eventid = "tunnel-down"
+                    severity = "high"
+                    desc = "IPSec tunnel to DR site dropped - IKE timeout"
+                else:
+                    eventid = "tunnel-up"
+                    severity = "informational"
+                    desc = "IPSec tunnel to DR site re-established"
+                lines.append(panw.panos_system(
+                    ts=t, hostname=fw.name, serial=_SERIAL,
+                    subtype="vpn",
+                    eventid=eventid,
+                    severity=severity,
+                    description=desc,
+                    seq_no=sc_rng.randint(100_000, 9_999_999),
+                ))
 
     return lines

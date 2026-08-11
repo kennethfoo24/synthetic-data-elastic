@@ -119,3 +119,73 @@ type=disassociation radio='0' vap='1' client_mac='AA:BB:CC:DD:EE:02' reason=1
         f"client_mac='{client_mac}' reason={reason}"
     )
     return _line(ts, hostname, "events", body)
+
+
+def meraki_event_device_down(
+    ts: datetime,
+    hostname: str,
+    device_name: str,
+    serial: str,
+) -> str:
+    """Device offline / unreachable event (reported by MX).
+
+    Example::
+
+        <134>1 1754912345.000000000 meraki-mx-01 events \
+type=device_down device='meraki-ap-02' serial='Q2KD-XXXX-XXXX'
+    """
+    body = f"type=device_down device='{device_name}' serial='{serial}'"
+    return _line(ts, hostname, "events", body)
+
+
+def meraki_event_device_up(
+    ts: datetime,
+    hostname: str,
+    device_name: str,
+    serial: str,
+) -> str:
+    """Device back online event (reported by MX).
+
+    Example::
+
+        <134>1 1754912345.000000000 meraki-mx-01 events \
+type=device_up device='meraki-ap-02' serial='Q2KD-XXXX-XXXX'
+    """
+    body = f"type=device_up device='{device_name}' serial='{serial}'"
+    return _line(ts, hostname, "events", body)
+
+
+def meraki_event_air_marshal(
+    ts: datetime,
+    hostname: str,
+    bssid: str,
+    ssid: str,
+    rssi: int = -70,
+) -> str:
+    """Air Marshal rogue-AP detection event (emitted by MR AP).
+
+    Example::
+
+        <134>1 1754912345.000000000 meraki-ap-01 events \
+type=air_marshal_detected bssid='AA:BB:CC:DD:EE:FF' ssid='EvilNet' rssi='-70'
+    """
+    body = f"type=air_marshal_detected bssid='{bssid}' ssid='{ssid}' rssi='{rssi}'"
+    return _line(ts, hostname, "events", body)
+
+
+def meraki_event_uplink_change(
+    ts: datetime,
+    hostname: str,
+    interface: str,
+    status: str,
+    ip: str,
+) -> str:
+    """MX WAN uplink failover / change event.
+
+    Example::
+
+        <134>1 1754912345.000000000 meraki-mx-01 events \
+type=uplink_change interface='wan1' status='active' ip='203.0.113.1'
+    """
+    body = f"type=uplink_change interface='{interface}' status='{status}' ip='{ip}'"
+    return _line(ts, hostname, "events", body)

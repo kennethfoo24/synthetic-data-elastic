@@ -17,6 +17,7 @@ from datetime import datetime
 
 from synthgen import GLOBAL_SEED
 from synthgen.common.patterns import rate_multiplier
+from synthgen.common.scenarios import active_scenarios
 from synthgen.common.topology import Topology
 from synthgen.syslog_gen.formats import meraki
 
@@ -41,6 +42,14 @@ def _wifi_client_mac(device_name: str, bucket: int, client_idx: int, seed: int) 
     octets = [rng.randint(0, 255) for _ in range(6)]
     octets[0] &= 0xFE  # force unicast (clear multicast bit)
     return ":".join(f"{o:02X}" for o in octets)
+
+
+def _scenario_serial(device_name: str) -> str:
+    """Deterministic fake serial number derived from device name."""
+    h = 5381
+    for c in device_name.encode():
+        h = ((h << 5) + h + c) & 0xFFFFFF
+    return f"Q2KD-{h:06X}"
 
 
 def generate_batch(topo: Topology, t: datetime, seed: int = GLOBAL_SEED) -> list[str]:
@@ -100,5 +109,60 @@ def generate_batch(topo: Topology, t: datetime, seed: int = GLOBAL_SEED) -> list
                     lines.append(
                         meraki.meraki_event_disassociation(t, dev.name, radio, vap, client_mac)
                     )
+
+        # ── Scenario overlay (separate RNG; does not touch baseline rng) ──────
+        sc = active_scenarios("meraki", t, seed)
+        if not sc:
+            continue
+
+        aps = [d for d in topo.devices_by_vendor_os("meraki") if d.role == "ap"]
+
+        for spec, ph in sc:
+            elapsed = ph * spec.duration_s
+            remaining = spec.duration_s - elapsed
+
+            if spec.id == "meraki.ap_offline":
+                # Device down/up events reported by the MX.
+                if dev.role != "firewall":
+                    continue
+                if not aps:
+                    continue
+                ap_rng = random.Random(f"{seed}|{spec.id}|target")
+                target_ap = aps[ap_rng.randint(0, len(aps) - 1)]
+                serial = _scenario_serial(target_ap.name)
+                if remaining > spec.duration_s * 0.1:
+                    lines.append(meraki.meraki_event_device_down(
+                        t, dev.name, target_ap.name, serial
+                    ))
+                else:
+                    lines.append(meraki.meraki_event_device_up(
+                        t, dev.name, target_ap.name, serial
+                    ))
+
+            elif spec.id == "meraki.rogue_ap":
+                # Air Marshal rogue-AP detection from each AP.
+                if dev.role != "ap":
+                    continue
+                rogue_rng = random.Random(f"{seed}|{spec.id}|rogue")
+                bssid_octets = [rogue_rng.randint(0, 255) for _ in range(6)]
+                bssid = ":".join(f"{o:02X}" for o in bssid_octets)
+                ssid = "FreePublicWiFi"
+                rssi = -int(50 + ph * 20)  # signal attenuates over time
+                lines.append(meraki.meraki_event_air_marshal(t, dev.name, bssid, ssid, rssi))
+
+            elif spec.id == "meraki.wan_failover":
+                # MX uplink-change event; primary goes down, secondary takes over.
+                if dev.role != "firewall":
+                    continue
+                if remaining > spec.duration_s * 0.1:
+                    # Failover: traffic on secondary uplink
+                    lines.append(meraki.meraki_event_uplink_change(
+                        t, dev.name, "wan2", "active", "203.0.113.51"
+                    ))
+                else:
+                    # Recovery: primary uplink restored
+                    lines.append(meraki.meraki_event_uplink_change(
+                        t, dev.name, "wan1", "active", "203.0.113.50"
+                    ))
 
     return lines

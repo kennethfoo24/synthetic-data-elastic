@@ -37,9 +37,10 @@ _MERAKI_AP_HOST = "meraki-ap-01"
 # ---------------------------------------------------------------------------
 
 def _asa_samples() -> list[str]:
-    """4 representative Cisco ASA syslog lines — one per emitted message type.
+    """6 representative Cisco ASA syslog lines — one per emitted message type.
 
-    Types covered: asa_302013, asa_302014, asa_106023, asa_113005
+    Types covered: asa_302013, asa_302014, asa_106023, asa_113005,
+                   asa_104001 (failover active), asa_104002 (failover standby)
     """
     return [
         asa.asa_302013(_TS, _ASA_HOST, 123456, "203.0.113.1", 12345, "10.20.5.11", 443),
@@ -47,14 +48,17 @@ def _asa_samples() -> list[str]:
                        duration="0:02:30", byte_count=512000),
         asa.asa_106023(_TS, _ASA_HOST, "203.0.113.2", 22222, "10.20.5.11", 22),
         asa.asa_113005(_TS, _ASA_HOST, "user5", "203.0.113.3"),
+        asa.asa_104001(_TS, _ASA_HOST, unit="Secondary"),
+        asa.asa_104002(_TS, _ASA_HOST, unit="Primary"),
     ]
 
 
 def _ios_samples() -> list[str]:
-    """5 representative Cisco IOS syslog lines — one per emitted message type.
+    """8 representative Cisco IOS syslog lines — one per emitted message type.
 
     Types covered: ios_login_success, ios_config_i, ios_link_updown,
-                   ios_lineproto_updown, ios_logginghost
+                   ios_lineproto_updown, ios_logginghost,
+                   ios_stp_topology_change, ios_stp_portstatus, ios_cpu_threshold
     """
     return [
         ios.ios_login_success(_TS, _IOS_HOST, 1001, "admin1", "10.10.1.5"),
@@ -62,6 +66,9 @@ def _ios_samples() -> list[str]:
         ios.ios_link_updown(_TS, _IOS_HOST, 1003, "up", "GigabitEthernet0/1"),
         ios.ios_lineproto_updown(_TS, _IOS_HOST, 1004, "up", "GigabitEthernet0/1"),
         ios.ios_logginghost(_TS, _IOS_HOST, 1005, "10.10.0.100"),
+        ios.ios_stp_topology_change(_TS, _IOS_HOST, 1006, 1, "GigabitEthernet0/1"),
+        ios.ios_stp_portstatus(_TS, _IOS_HOST, 1007, "GigabitEthernet0/1", "Listening"),
+        ios.ios_cpu_threshold(_TS, _IOS_HOST, 1008, "IP Input", 90),
     ]
 
 
@@ -69,6 +76,7 @@ def _panw_samples() -> list[str]:
     """3 representative PAN-OS syslog lines — one per emitted log type.
 
     Types covered: panos_traffic, panos_threat, panos_system
+    (Scenario effects reuse these existing types — no new wire format needed.)
     """
     return [
         panw.panos_traffic(
@@ -91,10 +99,12 @@ def _panw_samples() -> list[str]:
 
 
 def _meraki_samples() -> list[str]:
-    """3 representative Cisco Meraki syslog lines — one per log type.
+    """7 representative Cisco Meraki syslog lines — one per log type.
 
     Types covered: meraki_flow (MX flows), meraki_url (MX urls),
-                   meraki_event_association (AP events)
+                   meraki_event_association (AP events),
+                   meraki_event_device_down, meraki_event_device_up,
+                   meraki_event_air_marshal, meraki_event_uplink_change
     """
     return [
         meraki.meraki_flow(
@@ -106,6 +116,18 @@ def _meraki_samples() -> list[str]:
         ),
         meraki.meraki_event_association(
             _TS, _MERAKI_AP_HOST, 0, 1, "AA:BB:CC:DD:EE:02",
+        ),
+        meraki.meraki_event_device_down(
+            _TS, _MERAKI_MX_HOST, _MERAKI_AP_HOST, "Q2KD-000001",
+        ),
+        meraki.meraki_event_device_up(
+            _TS, _MERAKI_MX_HOST, _MERAKI_AP_HOST, "Q2KD-000001",
+        ),
+        meraki.meraki_event_air_marshal(
+            _TS, _MERAKI_AP_HOST, "AA:BB:CC:DD:EE:FF", "FreePublicWiFi", -70,
+        ),
+        meraki.meraki_event_uplink_change(
+            _TS, _MERAKI_MX_HOST, "wan2", "active", "203.0.113.51",
         ),
     ]
 

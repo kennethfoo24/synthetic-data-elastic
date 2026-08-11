@@ -79,3 +79,58 @@ def ios_logginghost(
 ) -> str:
     body = f"Logging to host {host} port 514 started - CLI initiated"
     return _line(ts, hostname, seq, "SYS", 6, "LOGGINGHOST_STARTSTOP", body)
+
+
+def ios_stp_topology_change(
+    ts: datetime,
+    hostname: str,
+    seq: int,
+    vlan: int,
+    interface: str,
+) -> str:
+    """STP topology change notification.
+
+    Example::
+
+        %SPANTREE-2-TOPOLOGY_CHANGE: VLAN0001 [port GigabitEthernet0/1] topology changed
+    """
+    body = f"VLAN{vlan:04d} [port {interface}] topology changed"
+    return _line(ts, hostname, seq, "SPANTREE", 2, "TOPOLOGY_CHANGE", body)
+
+
+def ios_stp_portstatus(
+    ts: datetime,
+    hostname: str,
+    seq: int,
+    interface: str,
+    state: str,
+) -> str:
+    """STP port state change.
+
+    Example::
+
+        %SPANTREE-7-PORTSTATUS: GigabitEthernet0/1 moved to Listening
+    """
+    body = f"{interface} moved to {state}"
+    return _line(ts, hostname, seq, "SPANTREE", 7, "PORTSTATUS", body)
+
+
+def ios_cpu_threshold(
+    ts: datetime,
+    hostname: str,
+    seq: int,
+    process: str = "IP Input",
+    cpu_pct: int = 90,
+) -> str:
+    """CPU hog / threshold exceeded (SYS-3-CPUHOG).
+
+    Example::
+
+        %SYS-3-CPUHOG: Task is running for 2 seconds or more,
+        Process = IP Input, CPU utilization 90%
+    """
+    body = (
+        f"Task is running for 2 seconds or more, "
+        f"Process = {process}, CPU utilization {cpu_pct}%"
+    )
+    return _line(ts, hostname, seq, "SYS", 3, "CPUHOG", body)
