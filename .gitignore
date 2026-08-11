@@ -5,3 +5,5 @@ __pycache__/
 .ruff_cache/
 dist/
 .venv/
+mcp-app/node_modules/
+mcp-app/dist/
