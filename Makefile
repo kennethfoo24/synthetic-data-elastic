@@ -1,4 +1,4 @@
-.PHONY: up down validate test bootstrap reset-databases
+.PHONY: up down validate test bootstrap reset-databases backfill import-dashboards
 
 bootstrap:
 	python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
@@ -14,6 +14,12 @@ validate:
 
 test:
 	.venv/bin/ruff check . && .venv/bin/pytest -v
+
+backfill: ## Backfill 7 days of history (idempotent)
+	.venv/bin/python -m synthsetup.backfill
+
+import-dashboards: ## Import custom HPE/Dell/Network-Overview dashboards into Kibana
+	.venv/bin/python -m synthsetup.import_dashboards
 
 # reset-databases: recover after a primary pod restart has left the replica
 # set / standby in an inconsistent state (emptyDir-backed DBs do not survive

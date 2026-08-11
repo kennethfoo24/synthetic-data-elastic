@@ -1,5 +1,15 @@
 # Backlog
 
+## Plan 4 completed (2026-08-11)
+
+24 recurring failure scenarios across 8 telemetry sources, a 7-day idempotent backfill, and 3 custom Kibana dashboards are complete and live-verified:
+
+- **24 scenarios** (`src/synthgen/common/scenarios.py`): 3 per source for panw, asa, ios, meraki, mongodb, postgresql, hpe, dell — each fires every 3h ± 45 min with concrete field-level effects documented in `docs/scenarios/`
+- **7-day backfill** (`src/synthsetup/backfill.py`): idempotent, covers all streams (syslog, NetFlow, SNMP); run with `make backfill`
+- **3 custom dashboards** (`setup/dashboards/{hpe,dell,network-overview}.ndjson`): import with `make import-dashboards`; IDs `synthnet-hpe-infrastructure`, `synthnet-dell-infrastructure`, `synthnet-network-overview`
+
+---
+
 Carried findings from Plan 1's final whole-branch review (2026-08-10). None block Plan 1; triage into Plans 2–4.
 
 ## Plan 2 entry work (will bite immediately if skipped)
