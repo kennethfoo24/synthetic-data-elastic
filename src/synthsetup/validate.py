@@ -407,6 +407,23 @@ def validate_mappings(ctx: Ctx, index: str, sample_doc: dict) -> None:
         sys.exit(1)
 
 
+def check_dashboards_exist(ctx: Ctx) -> str:
+    missing = []
+    for dash_id in [
+        "synthnet-hpe-infrastructure",
+        "synthnet-dell-infrastructure",
+        "synthnet-network-overview",
+    ]:
+        r = ctx.kb().get(f"/api/saved_objects/dashboard/{dash_id}")
+        if r.status_code == 404:
+            missing.append(dash_id)
+    if missing:
+        raise CheckFailed(
+            f"dashboards not found: {missing} — run: python -m synthsetup.import_dashboards"
+        )
+    return "3 custom dashboards present"
+
+
 def check_history_present(ctx: Ctx) -> str:
     """Verify that docs older than 24 h exist in ``logs-cisco_asa.log-default``.
 
@@ -468,6 +485,7 @@ CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("Meraki webhook events flowing", check_meraki_events_recent),
     ("Meraki event variety >= 2", check_meraki_event_variety),
     ("history present (>24 h)", check_history_present),
+    ("custom dashboards present", check_dashboards_exist),
 ]
 
 

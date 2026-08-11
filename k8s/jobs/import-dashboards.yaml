@@ -1,0 +1,17 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: import-dashboards
+  namespace: synthetic-network
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: fleet-setup
+      restartPolicy: Never
+      containers:
+        - name: import-dashboards
+          image: kennethfoo24/synthetic-netgen:latest
+          command: ["python", "-m", "synthsetup.import_dashboards"]
+          envFrom:
+            - secretRef: {name: elastic-credentials}

@@ -69,6 +69,9 @@ kubectl -n synthetic-network wait --for=condition=complete job/fleet-setup --tim
 }
 kubectl -n synthetic-network logs job/fleet-setup
 
+echo "==> importing custom dashboards"
+.venv/bin/python -m synthsetup.import_dashboards
+
 echo "==> agent + generators"
 kubectl apply -f k8s/elastic-agent.yaml
 # SHA-pin every synthetic-netgen reference: loop over all generator manifests
