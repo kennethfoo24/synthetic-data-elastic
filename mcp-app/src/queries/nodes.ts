@@ -36,7 +36,7 @@ export async function fetchNodes(
             top_hits: {
               size: 1,
               sort: [{ '@timestamp': { order: 'desc' } }],
-              _source: ['device.name', 'device.vendor', 'device.role', 'device.site'],
+              _source: ['device.name', 'device.vendor', 'device.role', 'device.site', 'device.ip'],
             },
           },
         },
@@ -68,20 +68,20 @@ export async function fetchNodes(
       const site: Node['site'] =
         rawSite === 'production' || rawSite === 'dr' ? rawSite : 'external';
 
+      // device.ip is present in enriched docs; absent in older docs — tolerate both
+      const mgmtIp = (src['device.ip'] ?? '') as string;
+      if (mgmtIp) knownIps.add(mgmtIp);
+
       nodes.push({
         id: name,
         name,
-        ip: '', // SNMP docs carry no management-IP field; IP filled by enrichment if available
+        ip: mgmtIp, // populated from device.ip; '' when field is absent (older docs)
         site,
         role,
         vendor,
         health: 'unknown', // populated later by fetchHealth
         logCount: 0,       // populated later by fetchLogVolume
       });
-
-      // Track any IP fields that might exist (future-proofing)
-      const mgmtIp = src['device.ip'] as string | undefined;
-      if (mgmtIp) knownIps.add(mgmtIp);
     }
   }
 
