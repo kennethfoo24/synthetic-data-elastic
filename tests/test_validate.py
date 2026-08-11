@@ -8,6 +8,7 @@ from synthsetup.validate import (
     Ctx,
     check_agents_online,
     check_asa_docs_recent,
+    check_history_present,
     check_ios_docs_recent,
     check_ios_mnemonic_variety,
     check_meraki_event_variety,
@@ -457,3 +458,40 @@ def test_ios_mnemonic_variety_fails_when_stream_missing():
         status_code=404, json={})
     with pytest.raises(CheckFailed, match="does not exist"):
         check_ios_mnemonic_variety(CTX)
+
+
+# ---------------------------------------------------------------------------
+# check_history_present
+# ---------------------------------------------------------------------------
+
+@respx.mock
+def test_history_present_passes_with_old_docs():
+    respx.post("https://es.example.com/logs-cisco_asa.log-default/_count").respond(
+        json={"count": 250_000})
+    result = check_history_present(CTX)
+    assert "250000" in result or "250,000" in result or "250" in result
+
+
+@respx.mock
+def test_history_present_fails_with_zero_old_docs():
+    respx.post("https://es.example.com/logs-cisco_asa.log-default/_count").respond(
+        json={"count": 0})
+    with pytest.raises(CheckFailed, match="no docs older than 24"):
+        check_history_present(CTX)
+
+
+@respx.mock
+def test_history_present_fails_when_stream_missing():
+    respx.post("https://es.example.com/logs-cisco_asa.log-default/_count").respond(
+        status_code=404, json={})
+    with pytest.raises(CheckFailed, match="does not exist"):
+        check_history_present(CTX)
+
+
+@respx.mock
+def test_history_present_suggests_backfill_command():
+    """Failure message must hint at the backfill command."""
+    respx.post("https://es.example.com/logs-cisco_asa.log-default/_count").respond(
+        json={"count": 0})
+    with pytest.raises(CheckFailed, match="backfill"):
+        check_history_present(CTX)

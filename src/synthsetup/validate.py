@@ -337,6 +337,97 @@ def check_ios_mnemonic_variety(ctx: Ctx) -> str:
     return f"{distinct} distinct IOS mnemonics (event.code) in last 15m"
 
 
+def _flatten_mapping_props(props: dict, prefix: str = "") -> set[str]:
+    """Recursively flatten ES mapping properties into dotted field names."""
+    result: set[str] = set()
+    for name, info in props.items():
+        full = f"{prefix}{name}" if prefix else name
+        result.add(full)
+        if "properties" in info:
+            result |= _flatten_mapping_props(info["properties"], f"{full}.")
+        if "fields" in info:  # multi-fields (e.g. text + keyword)
+            result |= _flatten_mapping_props(info["fields"], f"{full}.")
+    return result
+
+
+def _flatten_doc_fields(doc: dict, prefix: str = "") -> set[str]:
+    """Recursively flatten a dict into dotted field names."""
+    result: set[str] = set()
+    for key, val in doc.items():
+        full = f"{prefix}{key}" if prefix else key
+        result.add(full)
+        if isinstance(val, dict):
+            result |= _flatten_doc_fields(val, f"{full}.")
+    return result
+
+
+def validate_mappings(ctx: Ctx, index: str, sample_doc: dict) -> None:
+    """Validate *sample_doc* fields against the live mapping for *index*.
+
+    GETs ``/{index}/_mapping`` and hard-fails (calls ``sys.exit(1)``) if any
+    field in *sample_doc* is absent from the mapping.  This guards against
+    synthesized documents silently creating ad-hoc dynamic mappings that diverge
+    from the integration-managed schema.
+
+    The first offending field name is printed to stderr before exit.
+    """
+    r = ctx.es().get(f"/{index}/_mapping")
+    if r.status_code == 404:
+        print(
+            f"ERROR: index {index!r} does not exist — cannot validate mappings; "
+            "run the integration first",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if r.status_code >= 400:
+        print(
+            f"ERROR: GET /{index}/_mapping failed: HTTP {r.status_code}: {r.text[:200]}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    mapping_data = r.json()
+    known_fields: set[str] = set()
+    for idx_data in mapping_data.values():
+        props = idx_data.get("mappings", {}).get("properties", {})
+        known_fields |= _flatten_mapping_props(props)
+
+    # ECS / system meta-fields are always allowed
+    known_fields |= {"@timestamp", "_id", "_index", "_source", "_type"}
+
+    doc_fields = _flatten_doc_fields(sample_doc)
+    unknown = doc_fields - known_fields
+    if unknown:
+        offender = min(unknown)
+        print(
+            f"ERROR: field {offender!r} is absent from the mapping for {index!r} — "
+            "fix the synthesized doc schema or install the integration first",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def check_history_present(ctx: Ctx) -> str:
+    """Verify that docs older than 24 h exist in ``logs-cisco_asa.log-default``.
+
+    A passing result means the 7-day backfill has been run at least once and
+    the data is available for dashboard time-range queries.
+    """
+    r = ctx.es().post(
+        "/logs-cisco_asa.log-default/_count",
+        json={"query": {"range": {"@timestamp": {"lte": "now-24h"}}}},
+    )
+    if r.status_code == 404:
+        raise CheckFailed("data stream logs-cisco_asa.log-default does not exist")
+    count = r.json().get("count", 0)
+    if count == 0:
+        raise CheckFailed(
+            "no docs older than 24 h in logs-cisco_asa.log-default"
+            " — run: python -m synthsetup.backfill"
+        )
+    return f"{count} historical doc(s) (>24 h) in logs-cisco_asa.log-default"
+
+
 def check_meraki_syslog_recent(ctx: Ctx) -> str:
     """Verify Meraki syslog lines (flows/urls/events) flowing into logs-cisco_meraki.log-default."""
     r = ctx.es().post("/logs-cisco_meraki.log-default/_count", json={
@@ -376,6 +467,7 @@ CHECKS: list[tuple[str, Callable[[Ctx], str]]] = [
     ("Meraki syslog flowing", check_meraki_syslog_recent),
     ("Meraki webhook events flowing", check_meraki_events_recent),
     ("Meraki event variety >= 2", check_meraki_event_variety),
+    ("history present (>24 h)", check_history_present),
 ]
 
 
