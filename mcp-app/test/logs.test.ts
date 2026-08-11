@@ -22,85 +22,131 @@ function makeNode(name: string, ip = ''): Node {
   };
 }
 
-// Realistic syslog aggregation response
+// ---------------------------------------------------------------------------
+// Realistic three-aggregation response (what ES actually returns).
+//
+// Field assignments match confirmed live data:
+//   observer.hostname  → Cisco ASA, Palo Alto PANW
+//   log.syslog.hostname → Cisco IOS routers/switches, Cisco Meraki APs
+//   host.hostname      → catch-all (empty in current dataset)
+// ---------------------------------------------------------------------------
 const HAPPY_RESP = {
   aggregations: {
-    // ASA logs (observer.hostname)
     by_observer: {
       buckets: [
         { key: 'asa-prod-01', doc_count: 5432 },
-        { key: 'asa-prod-02', doc_count: 2100 },
+        { key: 'panw-fw-01',  doc_count: 8800 },
       ],
     },
-    // IOS/PANW/Meraki logs (host.hostname)
-    by_host: {
+    by_syslog: {
       buckets: [
-        { key: 'ios-sw-01', doc_count: 1200 },
-        { key: 'panw-fw-01', doc_count: 3300 },
+        { key: 'ios-rtr-01',   doc_count: 1200 },
+        { key: 'meraki-ap-01', doc_count: 450 },
       ],
+    },
+    by_host: {
+      buckets: [],
     },
   },
 };
 
 describe('fetchLogVolume', () => {
-  it('maps observer.hostname counts to matching nodes', async () => {
-    const nodes = [makeNode('asa-prod-01'), makeNode('asa-prod-02')];
+  it('maps observer.hostname counts to ASA/PANW nodes', async () => {
+    const nodes = [makeNode('asa-prod-01'), makeNode('panw-fw-01')];
     const es = makeEsClient(HAPPY_RESP);
     const { nodes: enriched, warnings } = await fetchLogVolume(es, nodes, WINDOW);
 
     expect(warnings).toHaveLength(0);
     expect(enriched.find((n) => n.name === 'asa-prod-01')?.logCount).toBe(5432);
-    expect(enriched.find((n) => n.name === 'asa-prod-02')?.logCount).toBe(2100);
+    expect(enriched.find((n) => n.name === 'panw-fw-01')?.logCount).toBe(8800);
   });
 
-  it('maps host.hostname counts to matching nodes', async () => {
-    const nodes = [makeNode('ios-sw-01'), makeNode('panw-fw-01')];
+  it('maps log.syslog.hostname counts to IOS/Meraki nodes', async () => {
+    // This is the field IOS routers and Meraki APs use — previously missed entirely.
+    const nodes = [makeNode('ios-rtr-01'), makeNode('meraki-ap-01')];
     const es = makeEsClient(HAPPY_RESP);
-    const { nodes: enriched } = await fetchLogVolume(es, nodes, WINDOW);
+    const { nodes: enriched, warnings } = await fetchLogVolume(es, nodes, WINDOW);
 
-    expect(enriched.find((n) => n.name === 'ios-sw-01')?.logCount).toBe(1200);
-    expect(enriched.find((n) => n.name === 'panw-fw-01')?.logCount).toBe(3300);
+    expect(warnings).toHaveLength(0);
+    expect(enriched.find((n) => n.name === 'ios-rtr-01')?.logCount).toBe(1200);
+    expect(enriched.find((n) => n.name === 'meraki-ap-01')?.logCount).toBe(450);
   });
 
-  it('accumulates counts from both aggs when a device appears in both', async () => {
+  it('picks up IOS device count when it only appears under log.syslog.hostname', async () => {
+    // Regression: before the fix, a device present only in by_syslog got logCount=0.
+    const resp = {
+      aggregations: {
+        by_observer: { buckets: [] },                               // no ASA match
+        by_syslog:   { buckets: [{ key: 'cisco-rtr-core-01', doc_count: 3700 }] },
+        by_host:     { buckets: [] },
+      },
+    };
+    const nodes = [makeNode('cisco-rtr-core-01')];
+    const es = makeEsClient(resp);
+    const { nodes: enriched, warnings } = await fetchLogVolume(es, nodes, WINDOW);
+
+    expect(warnings).toHaveLength(0);
+    expect(enriched[0].logCount).toBe(3700);
+  });
+
+  it('accumulates counts when a device appears in multiple aggs', async () => {
+    // A device should not appear in more than one field, but if it does the
+    // counts are summed (safe because it represents distinct log lines).
     const resp = {
       aggregations: {
         by_observer: { buckets: [{ key: 'shared-device', doc_count: 400 }] },
-        by_host: { buckets: [{ key: 'shared-device', doc_count: 600 }] },
+        by_syslog:   { buckets: [{ key: 'shared-device', doc_count: 200 }] },
+        by_host:     { buckets: [{ key: 'shared-device', doc_count: 100 }] },
       },
     };
     const nodes = [makeNode('shared-device')];
     const es = makeEsClient(resp);
     const { nodes: enriched } = await fetchLogVolume(es, nodes, WINDOW);
-    expect(enriched[0].logCount).toBe(1000);
+    expect(enriched[0].logCount).toBe(700);
   });
 
-  it('passes device names to both terms aggregations in the query', async () => {
-    const nodes = [makeNode('asa-prod-01'), makeNode('ios-sw-01')];
+  it('passes device names to all three hostname terms aggregations in the query', async () => {
+    const nodes = [makeNode('asa-prod-01'), makeNode('ios-rtr-01')];
     const es = makeEsClient(HAPPY_RESP);
     await fetchLogVolume(es, nodes, WINDOW);
 
     const call = (es.search as ReturnType<typeof vi.fn>).mock.calls[0][0];
     const shouldClauses = call.query.bool.filter[1].bool.should;
+
     const observerTerms = shouldClauses.find(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (c: any) => c.terms?.['observer.hostname'],
     );
+    const syslogTerms = shouldClauses.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (c: any) => c.terms?.['log.syslog.hostname'],
+    );
+    const hostTerms = shouldClauses.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (c: any) => c.terms?.['host.hostname'],
+    );
+
+    expect(observerTerms).toBeDefined();
+    expect(syslogTerms).toBeDefined();
+    expect(hostTerms).toBeDefined();
+
     expect(observerTerms.terms['observer.hostname']).toContain('asa-prod-01');
+    expect(syslogTerms.terms['log.syslog.hostname']).toContain('ios-rtr-01');
   });
 
-  it('returns logCount=0 for nodes not present in aggs', async () => {
+  it('returns logCount=0 for nodes not present in any agg', async () => {
     const nodes = [makeNode('unknown-device')];
     const es = makeEsClient(HAPPY_RESP);
     const { nodes: enriched } = await fetchLogVolume(es, nodes, WINDOW);
     expect(enriched[0].logCount).toBe(0);
   });
 
-  it('returns nodes unchanged with a warning when both aggs are empty', async () => {
+  it('returns nodes unchanged with a warning when all three aggs are empty', async () => {
     const emptyResp = {
       aggregations: {
         by_observer: { buckets: [] },
-        by_host: { buckets: [] },
+        by_syslog:   { buckets: [] },
+        by_host:     { buckets: [] },
       },
     };
     const nodes = [makeNode('asa-prod-01')];
