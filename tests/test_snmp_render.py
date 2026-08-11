@@ -303,6 +303,13 @@ class TestSnmprecGrammarParse:
             f"Committed .snmprec files differ from fresh render (re-run render.py): {drift}"
         )
 
+        # Drift check for snmp/data/logstash.conf
+        conf_path = DATA_DIR / "logstash.conf"
+        assert conf_path.exists(), "snmp/data/logstash.conf not committed — re-run render.py"
+        assert conf_path.read_text() == render_logstash_conf(DEVICES), (
+            "snmp/data/logstash.conf differs from fresh render — re-run render.py"
+        )
+
         # Drift check for k8s/logstash/logstash.yaml
         k8s_yaml_path = K8S_LOGSTASH_DIR / "logstash.yaml"
         expected_k8s = render_k8s_logstash_yaml(DEVICES)
@@ -358,11 +365,17 @@ class TestLogstashConf:
         )
 
     def test_add_field_per_device(self):
-        """Each device's input block must bake in device.name/vendor/role/site via add_field."""
+        """Each device's input block must bake in device metadata via add_field,
+        including device.ip so NetFlow edge data (IP-keyed) can be joined to
+        SNMP device identity in the topology MCP app.
+        """
         conf = render_logstash_conf(DEVICES)
         for d in DEVICES:
             assert f'"[device][name]"   => "{d.name}"' in conf, (
                 f"[device][name] for {d.name!r} missing from add_field"
+            )
+            assert f'"[device][ip]"     => "{d.ip}"' in conf, (
+                f"[device][ip] for {d.name!r} (ip={d.ip}) missing from add_field"
             )
             assert f'"[device][vendor]" => "{d.vendor}"' in conf, (
                 f"[device][vendor] for {d.name!r} missing from add_field"
