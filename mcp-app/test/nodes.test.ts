@@ -8,7 +8,9 @@ function makeEsClient(response: unknown): Client {
   return { search: vi.fn().mockResolvedValue(response) } as unknown as Client;
 }
 
-// Full SNMP device aggregation response
+// ---------------------------------------------------------------------------
+// Mock fixtures — NESTED shape (what ES actually returns from dynamic mapping)
+// ---------------------------------------------------------------------------
 const HAPPY_RESP = {
   aggregations: {
     by_device: {
@@ -21,10 +23,12 @@ const HAPPY_RESP = {
               hits: [
                 {
                   _source: {
-                    'device.name': 'router-prod-01',
-                    'device.vendor': 'Cisco',
-                    'device.role': 'router',
-                    'device.site': 'production',
+                    device: {
+                      name: 'router-prod-01',
+                      vendor: 'Cisco',
+                      role: 'router',
+                      site: 'production',
+                    },
                   },
                 },
               ],
@@ -39,10 +43,12 @@ const HAPPY_RESP = {
               hits: [
                 {
                   _source: {
-                    'device.name': 'switch-dr-01',
-                    'device.vendor': 'Arista',
-                    'device.role': 'switch',
-                    'device.site': 'dr',
+                    device: {
+                      name: 'switch-dr-01',
+                      vendor: 'Arista',
+                      role: 'switch',
+                      site: 'dr',
+                    },
                   },
                 },
               ],
@@ -55,7 +61,9 @@ const HAPPY_RESP = {
 };
 
 describe('fetchNodes', () => {
-  it('returns SNMP-backed nodes with correct fields on happy path', async () => {
+  it('parses nested _source shape (real ES return format)', async () => {
+    // This is the primary correctness test: _source is a nested object,
+    // NOT flat dotted keys — exactly how Elasticsearch returns dynamic-mapped docs.
     const es = makeEsClient(HAPPY_RESP);
     const { nodes, warnings } = await fetchNodes(es, WINDOW);
 
@@ -68,8 +76,46 @@ describe('fetchNodes', () => {
     expect(router?.vendor).toBe('Cisco');
     expect(router?.role).toBe('router');
     expect(router?.site).toBe('production');
-    expect(router?.health).toBe('unknown'); // not set by fetchNodes
+    expect(router?.health).toBe('unknown'); // populated later by fetchHealth
     expect(router?.logCount).toBe(0);
+  });
+
+  it('tolerates legacy flat dotted-key _source shape as fallback', async () => {
+    // Some older or explicitly-mapped indices may surface flat keys.
+    // The pick() helper should fall back to these gracefully.
+    const resp = {
+      aggregations: {
+        by_device: {
+          buckets: [
+            {
+              key: 'legacy-fw-01',
+              doc_count: 20,
+              latest: {
+                hits: {
+                  hits: [
+                    {
+                      _source: {
+                        'device.name': 'legacy-fw-01',
+                        'device.vendor': 'Juniper',
+                        'device.role': 'firewall',
+                        'device.site': 'production',
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+    const es = makeEsClient(resp);
+    const { nodes } = await fetchNodes(es, resp);
+    // Even with flat keys the fields should parse correctly
+    const fw = nodes.find((n) => n.id === 'legacy-fw-01');
+    expect(fw?.vendor).toBe('Juniper');
+    expect(fw?.role).toBe('firewall');
+    expect(fw?.site).toBe('production');
   });
 
   it('normalises unknown site values to "external"', async () => {
@@ -85,10 +131,12 @@ describe('fetchNodes', () => {
                   hits: [
                     {
                       _source: {
-                        'device.name': 'fw-01',
-                        'device.vendor': 'Palo Alto',
-                        'device.role': 'firewall',
-                        'device.site': 'office', // not production or dr
+                        device: {
+                          name: 'fw-01',
+                          vendor: 'Palo Alto',
+                          role: 'firewall',
+                          site: 'office', // not production or dr
+                        },
                       },
                     },
                   ],
@@ -117,10 +165,12 @@ describe('fetchNodes', () => {
                   hits: [
                     {
                       _source: {
-                        'device.name': 'device-no-role',
-                        'device.vendor': 'Generic',
-                        // device.role intentionally absent
-                        'device.site': 'production',
+                        device: {
+                          name: 'device-no-role',
+                          vendor: 'Generic',
+                          // role intentionally absent
+                          site: 'production',
+                        },
                       },
                     },
                   ],

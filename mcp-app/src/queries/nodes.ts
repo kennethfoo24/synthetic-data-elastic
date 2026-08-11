@@ -1,6 +1,28 @@
 import type { Client } from '@elastic/elasticsearch';
 import type { Node, TimeWindow } from '../types.js';
 
+/**
+ * Read a dotted-path field from an ES _source document, handling both the
+ * nested object shape that ES normally returns (e.g. { device: { vendor: 'Cisco' } })
+ * and the flat literal-dot-key shape produced by some older mappings or test doubles
+ * (e.g. { 'device.vendor': 'Cisco' }).  Nested traversal wins; flat is the fallback.
+ */
+function pick(src: Record<string, unknown>, field: string): unknown {
+  // Attempt nested traversal: split on '.' and walk the object tree
+  const parts = field.split('.');
+  let val: unknown = src;
+  for (const part of parts) {
+    if (val === null || val === undefined || typeof val !== 'object') {
+      val = undefined;
+      break;
+    }
+    val = (val as Record<string, unknown>)[part];
+  }
+  if (val !== undefined) return val;
+  // Fallback: literal dotted key stored directly on the source object
+  return src[field];
+}
+
 export interface FetchNodesOpts extends TimeWindow {
   /**
    * NetFlow IPs that had no matching SNMP device.
@@ -61,15 +83,15 @@ export async function fetchNodes(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const src: any = bucket.latest?.hits?.hits?.[0]?._source ?? {};
 
-      const name = (src['device.name'] ?? bucket.key ?? '') as string;
-      const vendor = (src['device.vendor'] ?? '') as string;
-      const role = (src['device.role'] ?? 'unknown') as string;
-      const rawSite = src['device.site'] as string | undefined;
+      const name = (pick(src, 'device.name') ?? bucket.key ?? '') as string;
+      const vendor = (pick(src, 'device.vendor') ?? '') as string;
+      const role = (pick(src, 'device.role') ?? 'unknown') as string;
+      const rawSite = pick(src, 'device.site') as string | undefined;
       const site: Node['site'] =
         rawSite === 'production' || rawSite === 'dr' ? rawSite : 'external';
 
       // device.ip is present in enriched docs; absent in older docs — tolerate both
-      const mgmtIp = (src['device.ip'] ?? '') as string;
+      const mgmtIp = (pick(src, 'device.ip') ?? '') as string;
       if (mgmtIp) knownIps.add(mgmtIp);
 
       nodes.push({
