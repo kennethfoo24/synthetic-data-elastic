@@ -2,6 +2,10 @@
 
 Tests cover:
   - Document/query builders in mongo.py and postgres.py (pure functions, no live DB)
+  - Scenario planners: plan_mongo_actions / plan_pg_actions (no live DB)
+  - Executors: execute_slow_storm, execute_repl_lag_inserts,
+    open/close_extra_connections, execute_seqscan_regression,
+    execute_vacuum_load, _run_deadlock_session (mocked DB objects)
   - Rate-multiplier math via patterns.rate_multiplier
   - Validate checks for MongoDB and PostgreSQL via respx mocks
 
@@ -11,22 +15,41 @@ No live MongoDB or PostgreSQL connection is required.
 from __future__ import annotations
 
 import random
+import threading
 from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 import respx
 
 from synthgen.common.patterns import rate_multiplier
 from synthgen.db_workload.mongo import (
+    CONN_EXHAUSTION_CAP,
+    REPL_LAG_MAX_INSERTS,
     SLOW_SCAN_INTERVAL,
+    STORM_SCANS_PER_TICK,
+    MongoPlan,
     build_order_doc,
     build_slow_scan_filter,
+    close_extra_connections,
+    execute_repl_lag_inserts,
+    execute_slow_storm,
+    open_extra_connections,
+    plan_mongo_actions,
 )
 from synthgen.db_workload.postgres import (
     CREATE_TABLE_SQL,
     PG_DSN_DEFAULT,
+    SEQSCAN_SCANS_PER_TICK,
+    VACUUM_CHURN_ROWS,
+    PgPlan,
+    _run_deadlock_session,
     build_insert_params,
     build_slow_scan_sql,
+    execute_deadlock_pair,
+    execute_seqscan_regression,
+    execute_vacuum_load,
+    plan_pg_actions,
 )
 from synthsetup.validate import (
     CheckFailed,
@@ -36,11 +59,13 @@ from synthsetup.validate import (
 )
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixtures / shared constants
 # ---------------------------------------------------------------------------
 
 TICK = datetime(2026, 8, 11, 12, 0, 0, tzinfo=UTC)
 CTX = Ctx(es_url="https://es.example.com", kibana_url="https://kb.example.com", api_key="k")
+SEED = 42
+
 
 # ---------------------------------------------------------------------------
 # mongo.py — build_order_doc
@@ -233,6 +258,630 @@ def test_base_ops_scales_with_multiplier():
         mult = rate_multiplier(t, "app", "db-workload")
         base_ops = max(1, int(10 * mult))
         assert 1 <= base_ops <= 20, f"hour={hour} base_ops={base_ops} out of range"
+
+
+# ---------------------------------------------------------------------------
+# plan_mongo_actions — planner (no live DB)
+# ---------------------------------------------------------------------------
+
+
+def _make_active_scenarios_patch(active_ids: list[str]):
+    """Return a mock for active_scenarios that claims *active_ids* are firing."""
+    from synthgen.common.scenarios import SCENARIOS
+
+    def fake_active(source, t, seed):
+        return [
+            (SCENARIOS[sid], 0.5)
+            for sid in active_ids
+            if sid in SCENARIOS and SCENARIOS[sid].source == source
+        ]
+
+    return fake_active
+
+
+def test_plan_mongo_no_active_scenario():
+    """With no scenario active the plan should be all-zeros / False."""
+    with patch(
+        "synthgen.db_workload.mongo.active_scenarios",
+        side_effect=_make_active_scenarios_patch([]),
+    ):
+        plan = plan_mongo_actions(TICK, SEED, current_extra_conns=0)
+    assert plan == MongoPlan()
+
+
+def test_plan_mongo_slow_storm_active():
+    with patch(
+        "synthgen.db_workload.mongo.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["mongo.slow_query_storm"]),
+    ):
+        plan = plan_mongo_actions(TICK, SEED)
+    assert plan.slow_scan_count == STORM_SCANS_PER_TICK
+    assert plan.repl_lag_inserts == 0
+    assert plan.conn_open_count == 0
+
+
+def test_plan_mongo_repl_lag_active():
+    with patch(
+        "synthgen.db_workload.mongo.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["mongo.repl_lag"]),
+    ):
+        plan = plan_mongo_actions(TICK, SEED)
+    assert plan.repl_lag_inserts == REPL_LAG_MAX_INSERTS
+    assert plan.slow_scan_count == 0
+
+
+def test_plan_mongo_conn_exhaustion_opens_to_cap():
+    """When conn_exhaustion is active and no extra conns exist, open the full cap."""
+    with patch(
+        "synthgen.db_workload.mongo.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["mongo.conn_exhaustion"]),
+    ):
+        plan = plan_mongo_actions(TICK, SEED, current_extra_conns=0)
+    assert plan.conn_open_count == CONN_EXHAUSTION_CAP
+    assert not plan.conn_close_all
+
+
+def test_plan_mongo_conn_exhaustion_partially_full():
+    """When some conns are already open, only open the remainder."""
+    with patch(
+        "synthgen.db_workload.mongo.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["mongo.conn_exhaustion"]),
+    ):
+        plan = plan_mongo_actions(TICK, SEED, current_extra_conns=10)
+    assert plan.conn_open_count == CONN_EXHAUSTION_CAP - 10
+    assert not plan.conn_close_all
+
+
+def test_plan_mongo_conn_exhaustion_at_cap_no_more():
+    """When already at cap, no further connections requested."""
+    with patch(
+        "synthgen.db_workload.mongo.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["mongo.conn_exhaustion"]),
+    ):
+        plan = plan_mongo_actions(TICK, SEED, current_extra_conns=CONN_EXHAUSTION_CAP)
+    assert plan.conn_open_count == 0
+
+
+def test_plan_mongo_conn_exhaustion_ends_triggers_close():
+    """When scenario is NOT active but extra conns exist, schedule close."""
+    with patch(
+        "synthgen.db_workload.mongo.active_scenarios",
+        side_effect=_make_active_scenarios_patch([]),
+    ):
+        plan = plan_mongo_actions(TICK, SEED, current_extra_conns=5)
+    assert plan.conn_close_all is True
+    assert plan.conn_open_count == 0
+
+
+def test_plan_mongo_no_extra_conns_no_close():
+    """When scenario not active and no extra conns, conn_close_all must be False."""
+    with patch(
+        "synthgen.db_workload.mongo.active_scenarios",
+        side_effect=_make_active_scenarios_patch([]),
+    ):
+        plan = plan_mongo_actions(TICK, SEED, current_extra_conns=0)
+    assert plan.conn_close_all is False
+
+
+def test_plan_mongo_multiple_scenarios():
+    """Multiple MongoDB scenarios can be simultaneously active."""
+    with patch(
+        "synthgen.db_workload.mongo.active_scenarios",
+        side_effect=_make_active_scenarios_patch(
+            ["mongo.slow_query_storm", "mongo.repl_lag"]
+        ),
+    ):
+        plan = plan_mongo_actions(TICK, SEED)
+    assert plan.slow_scan_count == STORM_SCANS_PER_TICK
+    assert plan.repl_lag_inserts == REPL_LAG_MAX_INSERTS
+
+
+# ---------------------------------------------------------------------------
+# plan_pg_actions — planner (no live DB)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_pg_no_active_scenario():
+    with patch(
+        "synthgen.db_workload.postgres.active_scenarios",
+        side_effect=_make_active_scenarios_patch([]),
+    ):
+        plan = plan_pg_actions(TICK, SEED)
+    assert plan == PgPlan()
+
+
+def test_plan_pg_seqscan_regression_active():
+    with patch(
+        "synthgen.db_workload.postgres.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["pg.seqscan_regression"]),
+    ):
+        plan = plan_pg_actions(TICK, SEED)
+    assert plan.slow_scan_count == SEQSCAN_SCANS_PER_TICK
+    assert not plan.deadlock_attempt
+    assert not plan.vacuum_analyze
+    assert plan.churn_rows == 0
+
+
+def test_plan_pg_vacuum_load_active():
+    with patch(
+        "synthgen.db_workload.postgres.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["pg.vacuum_load"]),
+    ):
+        plan = plan_pg_actions(TICK, SEED)
+    assert plan.churn_rows == VACUUM_CHURN_ROWS
+    # vacuum_analyze depends on timestamp modulo; just verify it is a bool
+    assert isinstance(plan.vacuum_analyze, bool)
+
+
+def test_plan_pg_vacuum_churn_always_set():
+    """churn_rows must be non-zero every tick during vacuum_load."""
+    with patch(
+        "synthgen.db_workload.postgres.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["pg.vacuum_load"]),
+    ):
+        for hour in range(24):
+            t = datetime(2026, 8, 11, hour, 0, 0, tzinfo=UTC)
+            plan = plan_pg_actions(t, SEED)
+            assert plan.churn_rows == VACUUM_CHURN_ROWS, f"churn_rows=0 at hour={hour}"
+
+
+def test_plan_pg_deadlock_active():
+    with patch(
+        "synthgen.db_workload.postgres.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["pg.deadlock"]),
+    ):
+        plan = plan_pg_actions(TICK, SEED)
+    # deadlock_attempt is periodically True; verify it's a bool
+    assert isinstance(plan.deadlock_attempt, bool)
+
+
+def test_plan_pg_deadlock_fires_periodically():
+    """deadlock_attempt must be True at least once in a 30-second span."""
+    fired = False
+    with patch(
+        "synthgen.db_workload.postgres.active_scenarios",
+        side_effect=_make_active_scenarios_patch(["pg.deadlock"]),
+    ):
+        base = int(TICK.timestamp())
+        # Align to a 30-second boundary and check that tick
+        aligned = base - (base % 30)
+        t = datetime.fromtimestamp(aligned, tz=UTC)
+        plan = plan_pg_actions(t, SEED)
+        fired = plan.deadlock_attempt
+    assert fired, "deadlock_attempt never True at a 30-second boundary"
+
+
+def test_plan_pg_multiple_scenarios():
+    with patch(
+        "synthgen.db_workload.postgres.active_scenarios",
+        side_effect=_make_active_scenarios_patch(
+            ["pg.seqscan_regression", "pg.vacuum_load"]
+        ),
+    ):
+        plan = plan_pg_actions(TICK, SEED)
+    assert plan.slow_scan_count == SEQSCAN_SCANS_PER_TICK
+    assert plan.churn_rows == VACUUM_CHURN_ROWS
+
+
+# ---------------------------------------------------------------------------
+# execute_slow_storm — executor (mocked collection)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_slow_storm_calls_count_documents_n_times():
+    mock_col = MagicMock()
+    mock_col.count_documents.return_value = 42
+    execute_slow_storm(mock_col, 3)
+    assert mock_col.count_documents.call_count == 3
+
+
+def test_execute_slow_storm_zero_count():
+    mock_col = MagicMock()
+    execute_slow_storm(mock_col, 0)
+    mock_col.count_documents.assert_not_called()
+
+
+def test_execute_slow_storm_swallows_exceptions():
+    """A failing count_documents must not propagate to the caller."""
+    mock_col = MagicMock()
+    mock_col.count_documents.side_effect = Exception("mongo down")
+    # Must not raise
+    execute_slow_storm(mock_col, 2)
+    assert mock_col.count_documents.call_count == 2
+
+
+def test_execute_slow_storm_passes_slow_scan_filter():
+    """The filter passed to count_documents must target the unindexed notes field."""
+    mock_col = MagicMock()
+    mock_col.count_documents.return_value = 0
+    execute_slow_storm(mock_col, 1)
+    filt = mock_col.count_documents.call_args[0][0]
+    assert "notes" in filt
+
+
+# ---------------------------------------------------------------------------
+# execute_repl_lag_inserts — executor (mocked collection)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_repl_lag_inserts_calls_insert_many():
+    mock_col = MagicMock()
+    rng = random.Random(1)
+    execute_repl_lag_inserts(mock_col, rng, TICK, 5)
+    mock_col.insert_many.assert_called_once()
+    docs = mock_col.insert_many.call_args[0][0]
+    assert len(docs) == 5
+
+
+def test_execute_repl_lag_inserts_bounded():
+    """insert_many must never be called with more than REPL_LAG_MAX_INSERTS docs."""
+    mock_col = MagicMock()
+    rng = random.Random(2)
+    execute_repl_lag_inserts(mock_col, rng, TICK, REPL_LAG_MAX_INSERTS)
+    docs = mock_col.insert_many.call_args[0][0]
+    assert len(docs) <= REPL_LAG_MAX_INSERTS
+
+
+def test_execute_repl_lag_inserts_uses_ordered_false():
+    mock_col = MagicMock()
+    execute_repl_lag_inserts(mock_col, random.Random(3), TICK, 3)
+    _, kwargs = mock_col.insert_many.call_args
+    assert kwargs.get("ordered") is False
+
+
+def test_execute_repl_lag_inserts_swallows_exceptions():
+    mock_col = MagicMock()
+    mock_col.insert_many.side_effect = Exception("network error")
+    # Must not raise
+    execute_repl_lag_inserts(mock_col, random.Random(4), TICK, 2)
+
+
+# ---------------------------------------------------------------------------
+# open_extra_connections / close_extra_connections — executor (patched pymongo)
+# ---------------------------------------------------------------------------
+
+
+def test_open_extra_connections_opens_n(monkeypatch):
+    mock_clients = [MagicMock() for _ in range(5)]
+    created = iter(mock_clients)
+    monkeypatch.setattr(
+        "synthgen.db_workload.mongo.pymongo",
+        type("m", (), {"MongoClient": lambda *a, **kw: next(created)})(),
+        raising=False,
+    )
+    # Patch via the module attribute actually used inside the function
+    with patch("synthgen.db_workload.mongo.open_extra_connections") as _mock:
+        # Call the real function directly by importing from the module
+        pass
+
+    # Use a different approach: patch pymongo inside the module namespace
+    import synthgen.db_workload.mongo as mongo_mod
+
+    opened_list = []
+
+    def fake_client(*args, **kwargs):
+        c = MagicMock()
+        opened_list.append(c)
+        return c
+
+    with patch.object(mongo_mod, "open_extra_connections", wraps=open_extra_connections):
+        import pymongo as _pymongo_real
+
+        with patch.object(_pymongo_real, "MongoClient", side_effect=fake_client):
+            result = open_extra_connections("mongodb://test/", 5)
+
+    assert len(result) == 5
+    assert len(opened_list) == 5
+
+
+def test_open_extra_connections_stops_on_error(monkeypatch):
+    """If one open fails, remaining attempts are skipped."""
+    import pymongo as _pymongo_real
+
+    call_count = 0
+
+    def fake_client(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise RuntimeError("too many connections")
+        return MagicMock()
+
+    with patch.object(_pymongo_real, "MongoClient", side_effect=fake_client):
+        result = open_extra_connections("mongodb://test/", 5)
+
+    # Only 1 should succeed (call_count == 2: first OK, second raises, loop breaks)
+    assert len(result) == 1
+
+
+def test_close_extra_connections_closes_all():
+    mock_clients = [MagicMock(), MagicMock(), MagicMock()]
+    conns = list(mock_clients)
+    close_extra_connections(conns)
+    for c in mock_clients:
+        c.close.assert_called_once()
+    assert len(conns) == 0
+
+
+def test_close_extra_connections_clears_list():
+    conns = [MagicMock(), MagicMock()]
+    close_extra_connections(conns)
+    assert conns == []
+
+
+def test_close_extra_connections_empty_list():
+    """Closing an empty list must not raise."""
+    close_extra_connections([])
+
+
+def test_close_extra_connections_swallows_close_errors():
+    c = MagicMock()
+    c.close.side_effect = Exception("already closed")
+    conns = [c]
+    close_extra_connections(conns)  # must not raise
+    assert conns == []
+
+
+# ---------------------------------------------------------------------------
+# execute_seqscan_regression — executor (mocked psycopg connection)
+# ---------------------------------------------------------------------------
+
+
+def _make_pg_conn_mock():
+    """Return a mock psycopg connection with a working cursor context manager."""
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.__enter__ = MagicMock(return_value=mock_cur)
+    mock_cur.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value = mock_cur
+    return mock_conn, mock_cur
+
+
+def test_execute_seqscan_regression_runs_n_scans():
+    mock_conn, mock_cur = _make_pg_conn_mock()
+    execute_seqscan_regression(mock_conn, 3)
+    assert mock_cur.execute.call_count == 3
+    assert mock_conn.commit.call_count == 3
+
+
+def test_execute_seqscan_regression_uses_ilike_sql():
+    mock_conn, mock_cur = _make_pg_conn_mock()
+    execute_seqscan_regression(mock_conn, 1)
+    sql = mock_cur.execute.call_args[0][0]
+    assert "ILIKE" in sql.upper()
+
+
+def test_execute_seqscan_regression_zero_count():
+    mock_conn, mock_cur = _make_pg_conn_mock()
+    execute_seqscan_regression(mock_conn, 0)
+    mock_cur.execute.assert_not_called()
+
+
+def test_execute_seqscan_regression_rolls_back_on_error():
+    mock_conn, mock_cur = _make_pg_conn_mock()
+    mock_cur.execute.side_effect = Exception("db error")
+    execute_seqscan_regression(mock_conn, 2)  # must not raise
+    assert mock_conn.rollback.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# execute_vacuum_load — executor (mocked psycopg connection + connect)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_vacuum_load_inserts_churn_rows():
+    mock_conn, mock_cur = _make_pg_conn_mock()
+    mock_vconn = MagicMock()
+    execute_vacuum_load(
+        mock_conn, "dsn", random.Random(1), TICK, churn_rows=10, do_vacuum=False,
+        _connect=lambda *a, **kw: mock_vconn,
+    )
+    # Should have called execute 10 times (one INSERT per row) + 1 DELETE
+    insert_calls = [
+        c for c in mock_cur.execute.call_args_list if "INSERT" in str(c)
+    ]
+    assert len(insert_calls) == 10
+
+
+def test_execute_vacuum_load_deletes_churn_rows():
+    mock_conn, mock_cur = _make_pg_conn_mock()
+    execute_vacuum_load(
+        mock_conn, "dsn", random.Random(2), TICK, churn_rows=5, do_vacuum=False,
+        _connect=lambda *a, **kw: MagicMock(),
+    )
+    delete_calls = [
+        c for c in mock_cur.execute.call_args_list if "DELETE" in str(c)
+    ]
+    assert len(delete_calls) == 1, "should issue exactly one bulk DELETE"
+
+
+def test_execute_vacuum_load_runs_vacuum_when_flagged():
+    mock_conn, _mock_cur = _make_pg_conn_mock()
+    mock_vconn = MagicMock()
+
+    execute_vacuum_load(
+        mock_conn, "dsn", random.Random(3), TICK, churn_rows=0, do_vacuum=True,
+        _connect=lambda *a, **kw: mock_vconn,
+    )
+    # The vacuum connection's execute should have received VACUUM ANALYZE
+    executed_sql = " ".join(str(c) for c in mock_vconn.execute.call_args_list)
+    assert "VACUUM" in executed_sql.upper()
+
+
+def test_execute_vacuum_load_closes_vacuum_connection():
+    mock_conn, _ = _make_pg_conn_mock()
+    mock_vconn = MagicMock()
+    execute_vacuum_load(
+        mock_conn, "dsn", random.Random(4), TICK, churn_rows=0, do_vacuum=True,
+        _connect=lambda *a, **kw: mock_vconn,
+    )
+    mock_vconn.close.assert_called_once()
+
+
+def test_execute_vacuum_load_no_vacuum_no_extra_connect():
+    """When do_vacuum is False, _connect must never be called."""
+    mock_conn, _ = _make_pg_conn_mock()
+    connect_calls = []
+    execute_vacuum_load(
+        mock_conn, "dsn", random.Random(5), TICK, churn_rows=5, do_vacuum=False,
+        _connect=lambda *a, **kw: connect_calls.append(1) or MagicMock(),
+    )
+    assert connect_calls == [], "vacuum connection must not be opened when do_vacuum=False"
+
+
+def test_execute_vacuum_load_swallows_insert_errors():
+    mock_conn, mock_cur = _make_pg_conn_mock()
+    mock_cur.execute.side_effect = Exception("db error")
+    execute_vacuum_load(
+        mock_conn, "dsn", random.Random(6), TICK, churn_rows=5, do_vacuum=False,
+    )  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _run_deadlock_session — internal helper (mocked connection)
+# ---------------------------------------------------------------------------
+
+
+def test_run_deadlock_session_executes_two_advisory_locks():
+    """Both lock acquisition SQL calls must reach the cursor."""
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+
+    ready = threading.Event()
+    go = threading.Event()
+    go.set()  # don't block waiting for the other session
+
+    _run_deadlock_session(mock_conn, 1001, 1002, ready, go, "A")
+
+    executed = [c.args[0] for c in mock_cur.execute.call_args_list]
+    assert any("1001" in sql for sql in executed), "first lock not acquired"
+    assert any("1002" in sql for sql in executed), "second lock not acquired"
+
+
+def test_run_deadlock_session_sets_ready_event():
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+
+    ready = threading.Event()
+    go = threading.Event()
+    go.set()
+
+    _run_deadlock_session(mock_conn, 1001, 1002, ready, go, "A")
+    assert ready.is_set()
+
+
+def test_run_deadlock_session_rolls_back_on_exception():
+    """If the second lock acquisition raises, rollback must be called."""
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+    # First execute succeeds, second raises (simulating deadlock)
+    mock_cur.execute.side_effect = [None, Exception("deadlock detected")]
+
+    ready = threading.Event()
+    go = threading.Event()
+    go.set()
+
+    _run_deadlock_session(mock_conn, 1001, 1002, ready, go, "A")
+
+    mock_conn.rollback.assert_called_once()
+
+
+def test_run_deadlock_session_closes_connection_on_success():
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+
+    ready = threading.Event()
+    go = threading.Event()
+    go.set()
+
+    _run_deadlock_session(mock_conn, 1001, 1002, ready, go, "A")
+    mock_conn.close.assert_called_once()
+
+
+def test_run_deadlock_session_closes_connection_on_error():
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+    mock_cur.execute.side_effect = [None, Exception("deadlock")]
+
+    ready = threading.Event()
+    go = threading.Event()
+    go.set()
+
+    _run_deadlock_session(mock_conn, 1001, 1002, ready, go, "B")
+    mock_conn.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# execute_deadlock_pair — executor (mock _connect)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_deadlock_pair_opens_two_connections():
+    """Two separate psycopg connections must be opened (one per session)."""
+    opened = []
+
+    def fake_connect(dsn, **kwargs):
+        c = MagicMock()
+        c.cursor.return_value = MagicMock()
+        opened.append(c)
+        return c
+
+    execute_deadlock_pair("fake-dsn", _connect=fake_connect)
+    assert len(opened) == 2
+
+
+def test_execute_deadlock_pair_closes_both_connections():
+    """Both connections must be closed regardless of which session is aborted."""
+    opened = []
+
+    def fake_connect(dsn, **kwargs):
+        c = MagicMock()
+        cur = MagicMock()
+        c.cursor.return_value = cur
+        opened.append(c)
+        return c
+
+    execute_deadlock_pair("fake-dsn", _connect=fake_connect)
+
+    # Wait briefly for threads to finish (they join in execute_deadlock_pair)
+    for c in opened:
+        c.close.assert_called()
+
+
+def test_execute_deadlock_pair_rollback_on_deadlock():
+    """The session that loses the deadlock must call rollback."""
+    opened = []
+    def fake_connect(dsn, **kwargs):
+        conn_idx = len(opened)
+        c = MagicMock()
+        cur = MagicMock()
+
+        if conn_idx == 1:
+            # Second connection: second execute raises (simulates deadlock victim)
+            cur.execute.side_effect = [None, Exception("deadlock detected")]
+
+        c.cursor.return_value = cur
+        opened.append(c)
+        return c
+
+    execute_deadlock_pair("fake-dsn", _connect=fake_connect)
+
+    # The second connection should have rolled back
+    opened[1].rollback.assert_called_once()
+
+
+def test_execute_deadlock_pair_swallows_connect_error():
+    """If the DB is unreachable, execute_deadlock_pair must not raise."""
+
+    def failing_connect(*a, **kw):
+        raise RuntimeError("connection refused")
+
+    execute_deadlock_pair("bad-dsn", _connect=failing_connect)  # must not raise
 
 
 # ---------------------------------------------------------------------------
