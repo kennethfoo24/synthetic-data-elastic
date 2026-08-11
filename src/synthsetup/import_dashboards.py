@@ -23,11 +23,15 @@ def import_dashboards(kibana_url: str, api_key: str) -> None:
     )
     for ndjson_path in sorted(DASHBOARDS_DIR.glob("*.ndjson")):
         ndjson_content = ndjson_path.read_text()
-        r = client.post(
-            "/api/saved_objects/_import",
-            params={"overwrite": "true"},
-            files={"file": (ndjson_path.name, ndjson_content.encode(), "application/ndjson")},
-        )
+        try:
+            r = client.post(
+                "/api/saved_objects/_import",
+                params={"overwrite": "true"},
+                files={"file": (ndjson_path.name, ndjson_content.encode(), "application/ndjson")},
+            )
+        except httpx.HTTPError as exc:
+            print(f"ERROR importing {ndjson_path.name}: {exc}", file=sys.stderr)
+            sys.exit(1)
         if r.status_code not in (200, 201):
             print(
                 f"ERROR importing {ndjson_path.name}: {r.status_code} {r.text}",
