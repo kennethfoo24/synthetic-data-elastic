@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p ui/tsconfig.json",
     "test": "vitest run",
-    "build": "tsc",
+    "build": "tsc && vite build --config ui/vite.config.ts",
+    "build:server": "tsc",
+    "build:ui": "vite build --config ui/vite.config.ts",
+    "dev:ui": "vite --config ui/vite.config.ts",
     "start": "node dist/server.js",
     "dev": "node --watch dist/server.js"
   },
@@ -14,11 +17,22 @@
   },
   "dependencies": {
     "@elastic/elasticsearch": "^9.4.3",
-    "@modelcontextprotocol/sdk": "^1.30.0"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-force-graph-2d": "^1.29.1"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^26.1.2",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^30.0.1",
     "typescript": "^7.0.2",
+    "vite": "^8.2.0",
+    "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^4.1.10"
   }
 }
