@@ -387,22 +387,22 @@ def test_meraki_event_variety_passes_with_primary_field():
     respx.post(_DS_SEARCH).respond(json=_terms_agg_response(_ALERT_VALUES))
     result = check_meraki_event_variety(CTX)
     assert "3" in result
-    assert "cisco_meraki.alert_type" in result
+    assert "event.action" in result
 
 
 @respx.mock
-def test_meraki_event_variety_falls_back_to_json_alertType():
-    """Primary field returns 0 buckets → falls back to json.alertType."""
+def test_meraki_event_variety_falls_back_to_alertTypeId():
+    """Primary field (event.action) returns 0 buckets → fallback to cisco_meraki.event.alertTypeId."""
     respx.post(_DS_COUNT).respond(json={"count": 0})
-    # First _search call returns 0 buckets; second returns 3 buckets.
-    # respx supports a Sequence as side_effect — responses are consumed in order.
+    # First _search call (event.action) returns 0 buckets;
+    # second _search call (cisco_meraki.event.alertTypeId) returns 3 buckets.
     respx.post(_DS_SEARCH).mock(side_effect=[
         httpx.Response(200, json=_empty_agg_response()),
         httpx.Response(200, json=_terms_agg_response(_ALERT_VALUES)),
     ])
     result = check_meraki_event_variety(CTX)
     assert "3" in result
-    assert "json.alertType" in result
+    assert "cisco_meraki.event.alertTypeId" in result
 
 
 @respx.mock

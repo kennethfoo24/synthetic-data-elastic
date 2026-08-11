@@ -82,11 +82,16 @@ def build_events(t: datetime, rng: random.Random, secret: str, n: int) -> list[d
         alertData (plus the original version/sharedSecret/sentAt/… set).
     """
     sent_at = t.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Rotate alert types using the 30-second tick index derived from the
+    # timestamp.  This guarantees that consecutive events have different
+    # alertType values and that within any 15-minute window (30 ticks ×
+    # len(_ALERT_TYPES) cycle = 150 slots) every type appears at least once.
+    base_tick = int(t.timestamp()) // 30
     events: list[dict] = []
-    for _ in range(n):
+    for i in range(n):
         device_name = rng.choice(list(_AP_SERIALS.keys()))
         serial = _AP_SERIALS[device_name]
-        alert_type = rng.choice(_ALERT_TYPES)
+        alert_type = _ALERT_TYPES[(base_tick + i) % len(_ALERT_TYPES)]
         alert_id = f"alert-{rng.randint(100_000, 999_999)}"
         events.append({
             # Core identity

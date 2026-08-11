@@ -293,11 +293,11 @@ def check_meraki_event_variety(ctx: Ctx) -> str:
             .get("buckets", [])
         ]
 
-    values = _agg_alert_types("cisco_meraki.alert_type")
-    used_field = "cisco_meraki.alert_type"
+    values = _agg_alert_types("event.action")
+    used_field = "event.action"
     if not values:
-        values = _agg_alert_types("json.alertType")
-        used_field = "json.alertType"
+        values = _agg_alert_types("cisco_meraki.event.alertTypeId")
+        used_field = "cisco_meraki.event.alertTypeId"
 
     if len(values) < 2:
         raise CheckFailed(
