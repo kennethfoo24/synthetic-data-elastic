@@ -7,3 +7,4 @@ dist/
 .venv/
 mcp-app/node_modules/
 mcp-app/dist/
+mcp-app/dist-ui/

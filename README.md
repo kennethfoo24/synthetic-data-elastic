@@ -18,3 +18,11 @@ To reset databases after a pod restart (emptyDir volumes are lost on restart):
 ```bash
 make reset-databases
 ```
+
+## Network topology MCP app
+
+[`mcp-app/`](mcp-app/README.md) ships a one-tool MCP server (`network-topology`) that renders an interactive prod/DR network map directly inside Claude Code. It queries only ingested Elasticsearch data — it never reads `topology/network.yaml`.
+
+Live-verified result: **26 nodes / 28 edges / 6 cross-site edges** (18 production, 8 DR, zero warnings).
+
+See [mcp-app/README.md](mcp-app/README.md) for setup, registration, and usage.
